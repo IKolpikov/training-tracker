@@ -265,13 +265,11 @@ export default function App() {
   // Bottom padding: Sport view has fixed ProgressBar (h~88) + TabBar (h-14) above it.
   // Habits/Польза only have TabBar.
   const mainPb = activeTab === "sport" ? "pb-44" : "pb-20";
-  // DayHeader is date-aware. Польза has no date concept → hide it.
-  const showDayHeader = activeTab !== "polza";
 
   return (
     <DayContext.Provider value={ctx}>
       <div className={`mx-auto max-w-[420px] min-h-full flex flex-col ${mainPb}`}>
-        {showDayHeader && <DayHeader />}
+        <DayHeader />
         <main className="flex-1 px-4 py-3">
           {activeTab === "sport"  && <ExerciseList />}
           {activeTab === "habits" && <HabitsView />}

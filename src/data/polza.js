@@ -8,7 +8,11 @@
 // effectively permanent (can be edited manually in localStorage / Sheet).
 
 export const polza = [
-  { id: "smazat_krovat", name: "Смазать кровать" },
+  { id: "smazat_krovat",   name: "Смазать кровать" },
+  { id: "polit_cvety",     name: "Полить цветы" },
+  { id: "postirat_kovyor", name: "Постирать ковёр" },
+  { id: "zakaz_noski",     name: "Заказать новые носки" },
+  { id: "pribrat_stol",    name: "Прибрать рабочий стол" },
 ];
 
 export const polzaById = Object.fromEntries(polza.map(p => [p.id, p]));
