@@ -3,7 +3,12 @@ import { useDay } from "../DayContext.jsx";
 import { dayProgress } from "../utils/progress.js";
 import { WEEK, schedule } from "../data/schedule.js";
 import { exerciseById } from "../data/plan.js";
+import { isHabitLog } from "../data/habits.js";
+import { isPolzaLog } from "../data/polza.js";
 import WeekStatsModal from "./WeekStatsModal.jsx";
+
+// Sport-only filter: weekly counter must not include habit_* / polza_* rows.
+const isSportLog = (r) => !isHabitLog(r.exercise_id) && !isPolzaLog(r.exercise_id);
 
 function barColor(pct) {
   if (pct < 33) return "bg-rose-500";
@@ -28,18 +33,19 @@ export default function ProgressBar() {
   // Day progress
   const { completed, totalTarget, pct: dayPct } = dayProgress(day, dateStr, weekLogs, dayLogs);
 
-  // Week progress
-  const { weekDone, weekPct } = useMemo(() => {
-    const weekDone = weekLogs.length;
-    const weekPct  = WEEK_TARGET > 0
+  // Week progress (sport only — exclude habit_* / polza_* rows)
+  const { weekDone, weekPct, sportLogs } = useMemo(() => {
+    const sportLogs = weekLogs.filter(isSportLog);
+    const weekDone  = sportLogs.length;
+    const weekPct   = WEEK_TARGET > 0
       ? Math.round((Math.min(weekDone, WEEK_TARGET) / WEEK_TARGET) * 100)
       : 0;
-    return { weekDone, weekPct };
+    return { weekDone, weekPct, sportLogs };
   }, [weekLogs]);
 
   return (
     <>
-      <div className="fixed bottom-0 inset-x-0 z-20 bg-slate-950/95 backdrop-blur border-t border-slate-800">
+      <div className="fixed bottom-14 inset-x-0 z-20 bg-slate-950/95 backdrop-blur border-t border-slate-800">
         <div className="mx-auto max-w-[420px] px-4 pt-3 pb-2 flex flex-col gap-2.5">
 
           {/* ── Day bar ─────────────────────────────────────────────── */}
@@ -83,7 +89,7 @@ export default function ProgressBar() {
       {showWeekStats && (
         <WeekStatsModal
           weekIso={weekIso}
-          weekLogs={weekLogs}
+          weekLogs={sportLogs}
           onClose={() => setShowWeekStats(false)}
         />
       )}

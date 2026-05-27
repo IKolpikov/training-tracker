@@ -15,10 +15,24 @@ import {
   doneToday,
   strengthTargetToday
 } from "./utils/progress.js";
+import {
+  habits,
+  habitLogId,
+} from "./data/habits.js";
+import {
+  polzaById,
+  polzaLogId,
+  getPolzaDoneIds,
+  persistPolzaDoneIds,
+} from "./data/polza.js";
 import DayHeader from "./components/DayHeader.jsx";
 import ExerciseList from "./components/ExerciseList.jsx";
 import ProgressBar from "./components/ProgressBar.jsx";
 import MultiSetModal from "./components/MultiSetModal.jsx";
+import TabBar from "./components/TabBar.jsx";
+import HabitsView from "./components/HabitsView.jsx";
+import PolzaView from "./components/PolzaView.jsx";
+import UndoSnackbar from "./components/UndoSnackbar.jsx";
 
 // Earliest date user can navigate to. History starts here.
 const HISTORY_START = "2026-05-25";
@@ -33,6 +47,16 @@ export default function App() {
 
   const [loading, setLoading]           = useState(true);
   const [multiSetExId, setMultiSetExId] = useState(null);
+
+  // Tab navigation: "sport" | "habits" | "polza".
+  const [activeTab, setActiveTab] = useState("sport");
+
+  // Польза archive (lifetime done ids), persisted to localStorage.
+  const [polzaDoneIds, setPolzaDoneIds] = useState(() => getPolzaDoneIds());
+  useEffect(() => { persistPolzaDoneIds(polzaDoneIds); }, [polzaDoneIds]);
+
+  // Undo snackbar state: { kind: "polza", id, timestamp } | null
+  const [undoState, setUndoState] = useState(null);
 
   const dateStr = useMemo(() => toDateStr(viewedDate),     [viewedDate]);
   const day     = useMemo(() => getRussianDay(viewedDate), [viewedDate]);
@@ -53,6 +77,13 @@ export default function App() {
 
   function addToMap(prev, iso, entries) {
     return { ...prev, [iso]: [...(prev[iso] || []), ...entries] };
+  }
+
+  function removeFromMap(prev, iso, timestamp) {
+    return {
+      ...prev,
+      [iso]: (prev[iso] || []).filter(r => String(r.timestamp) !== String(timestamp)),
+    };
   }
 
   // ── data loading ──────────────────────────────────────────────────────────
@@ -161,11 +192,50 @@ export default function App() {
     const entries = dayLogs.filter(r => r.exercise_id === exId);
     if (entries.length === 0) return;
     const last = entries[entries.length - 1];
-    setLogsMap(prev => ({
-      ...prev,
-      [weekIso]: (prev[weekIso] || []).filter(r => String(r.timestamp) !== String(last.timestamp)),
-    }));
+    setLogsMap(prev => removeFromMap(prev, weekIso, last.timestamp));
     removeOptimistic(last.timestamp, weekIso);
+  };
+
+  // ── Habits ────────────────────────────────────────────────────────────────
+  const logHabit = (id) => {
+    const h = habits[id];
+    if (!h) return;
+    const entry = buildEntry({ id: habitLogId(id), name: h.name }, {}, 1);
+    logSetOptimistic(entry);
+    setLogsMap(prev => addToMap(prev, weekIso, [entry]));
+  };
+
+  const removeHabit = (id) => {
+    const logId   = habitLogId(id);
+    const entries = dayLogs.filter(r => r.exercise_id === logId);
+    if (entries.length === 0) return;
+    const last = entries[entries.length - 1];
+    setLogsMap(prev => removeFromMap(prev, weekIso, last.timestamp));
+    removeOptimistic(last.timestamp, weekIso);
+  };
+
+  // ── Польза ────────────────────────────────────────────────────────────────
+  const logPolza = (id) => {
+    const p = polzaById[id];
+    if (!p) return;
+    const entry = buildEntry({ id: polzaLogId(id), name: p.name }, {}, 1);
+    logSetOptimistic(entry);
+    setLogsMap(prev => addToMap(prev, weekIso, [entry]));
+    setPolzaDoneIds(prev => new Set([...prev, id]));
+    setUndoState({ kind: "polza", id, timestamp: entry.timestamp });
+  };
+
+  const undoPolza = () => {
+    if (!undoState || undoState.kind !== "polza") return;
+    const { id, timestamp } = undoState;
+    setLogsMap(prev => removeFromMap(prev, weekIso, timestamp));
+    removeOptimistic(timestamp, weekIso);
+    setPolzaDoneIds(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setUndoState(null);
   };
 
   // Compute target + done for modal (relative to viewed day).
@@ -187,17 +257,38 @@ export default function App() {
     openMultiSet: setMultiSetExId,
     refresh,
     goPrev, goNext, prevDisabled,
+    // Habits + Польза
+    logHabit, removeHabit,
+    polzaDoneIds, logPolza,
   };
+
+  // Bottom padding: Sport view has fixed ProgressBar (h~88) + TabBar (h-14) above it.
+  // Habits/Польза only have TabBar.
+  const mainPb = activeTab === "sport" ? "pb-44" : "pb-20";
+  // DayHeader is date-aware. Польза has no date concept → hide it.
+  const showDayHeader = activeTab !== "polza";
 
   return (
     <DayContext.Provider value={ctx}>
-      {/* pb-28 = room for two fixed progress bars */}
-      <div className="mx-auto max-w-[420px] min-h-full flex flex-col pb-28">
-        <DayHeader />
+      <div className={`mx-auto max-w-[420px] min-h-full flex flex-col ${mainPb}`}>
+        {showDayHeader && <DayHeader />}
         <main className="flex-1 px-4 py-3">
-          <ExerciseList />
+          {activeTab === "sport"  && <ExerciseList />}
+          {activeTab === "habits" && <HabitsView />}
+          {activeTab === "polza"  && <PolzaView />}
         </main>
-        <ProgressBar />
+
+        {activeTab === "sport" && <ProgressBar />}
+
+        <TabBar active={activeTab} onChange={setActiveTab} />
+
+        {undoState && undoState.kind === "polza" && (
+          <UndoSnackbar
+            message={`Готово: ${polzaById[undoState.id]?.name || ""}`}
+            onUndo={undoPolza}
+            onDismiss={() => setUndoState(null)}
+          />
+        )}
 
         {multiSetExId && modalProps && (
           <MultiSetModal
