@@ -82,7 +82,10 @@ export default function WeekStatsModal({ weekIso, weekLogs, onClose }) {
           <div>
             <div className="text-lg font-semibold">Неделя {weekIso}</div>
             <div className="text-xs text-slate-500 mt-0.5">
-              {totalDone} из {totalTarget} сетов · {pct}%
+              {totalDone} из {totalTarget} базовых сетов · {pct}%
+            </div>
+            <div className="text-xs text-slate-600 mt-1 leading-snug max-w-[260px]">
+              Таргеты дней могут быть выше из-за catch-up переноса пропущенных сетов
             </div>
           </div>
           <button
