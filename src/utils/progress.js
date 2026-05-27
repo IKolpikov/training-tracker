@@ -1,11 +1,21 @@
-// Progress + strength catch-up redistribution.
-// Rules locked with user:
-//  - Catch-up applies to STR/ISO only. Cardio deficit is NOT redistributed.
-//  - Deficit lands only on non-KEY days (anywhere except Ср, Сб).
-//  - Bonus never adds a NEW card to a day: if exercise isn't scheduled today, target stays 0.
-//  - Week resets weekly (current week_iso only). Unfinished volume burns on Вс.
+// Progress + strength deficit/surplus carry.
+//
+// Rule (locked with user, see Total Load plan sheet):
+//   - Дефицит: undone sets cascade onto the NEAREST NEXT scheduled day of that exercise.
+//   - Профицит: extra sets reduce the NEAREST NEXT scheduled day to 0 (shown green "0/0").
+//     Leftover surplus keeps cascading forward through subsequent scheduled days.
+//   - Invariant: SUM of planned sets across the week == Total Load (sheet), unless
+//     surplus exceeds remaining volume, in which case SUM < Total Load (over-achievement).
+//   - Cardio is NOT redistributed (per-session static target).
+//   - KEY days no longer special-cased for math (the new rule treats every scheduled day equally).
+//     KEY_DAYS still drives the visual "Key session" badge, that's all.
+//
+// Implementation: walk all prior scheduled days chronologically; maintain a signed `carry`
+// that represents net deficit (positive) or surplus (negative) entering today.
+//   carry_out = base + carry_in - done   (unclamped — so surplus excess is preserved)
+//   target_today = max(0, base + carry)
 
-import { WEEK, KEY_DAYS, schedule } from "../data/schedule.js";
+import { WEEK, schedule } from "../data/schedule.js";
 import { exerciseById } from "../data/plan.js";
 
 function scheduledDays(exId) {
@@ -13,42 +23,34 @@ function scheduledDays(exId) {
 }
 
 // weekLogs: array of Log rows for the CURRENT week_iso (already filtered).
-// Returns today's target set count for a strength exercise, with catch-up/surplus baked in.
+// Returns today's target set count for a strength exercise with deficit/surplus carry baked in.
 //
-// Key rule: today's target depends ONLY on PAST days' logs (r.day < today's day-of-week).
-// Logging on TODAY changes the [done/target] counter but does NOT change the target itself.
-// This avoids the "target jumps when I start logging" UX confusion.
-//
-//  - PAST deficit (missed sets from earlier days)  -> spread bonus over today + future non-KEY days
-//  - PAST surplus (extra sets in earlier days)     -> spread reduction over today + future non-KEY days
-//    (on the first scheduled day there's no past, so no adjustment ever fires here -> stays at base)
+// Walk all PRIOR scheduled days of this exercise chronologically (by WEEK order).
+// Maintain a signed `carry`:
+//   carry_out = base + carry_in - donePrior   (unclamped — preserves surplus excess)
+// Today's displayed target = max(0, base_today + carry_in_today).
+// Today's own logs do NOT change today's target; logging on a past day retroactively
+// recomputes downstream day targets (which is the desired behavior).
 export function strengthTargetToday(exId, day, weekLogs) {
   const ex = exerciseById[exId];
   const onCardToday = schedule[day].strength.includes(exId);
-  const base = onCardToday ? ex.setsPerSession : 0;
-  if (base === 0) return 0;                 // not on today's card -> no bonus injected
-  if (KEY_DAYS.includes(day)) return base;  // KEY day -> never receives catch-up
+  if (!onCardToday) return 0;
+  const base = ex.setsPerSession;
 
   const sched = scheduledDays(exId);
-  const todayIdx = WEEK.indexOf(day);
+  const todayPos = sched.indexOf(day);
+  if (todayPos <= 0) return base;  // first scheduled day → no prior carry, target = base
 
-  // Sets that SHOULD have been done by END OF YESTERDAY.
-  const pastSessions = sched.filter(d => WEEK.indexOf(d) < todayIdx).length;
-  const expectedByYesterday = pastSessions * ex.setsPerSession;
+  let carry = 0;
+  for (let i = 0; i < todayPos; i++) {
+    const priorDay  = sched[i];
+    const priorDone = weekLogs.filter(
+      r => r.exercise_id === exId && r.day === priorDay
+    ).length;
+    carry = base + carry - priorDone;  // signed: + = deficit owed, − = surplus to absorb
+  }
 
-  // Sets actually logged in past days (excluding today's logs).
-  const donePast = weekLogs.filter(
-    r => r.exercise_id === exId && WEEK.indexOf(r.day) < todayIdx
-  ).length;
-
-  // delta > 0 = past deficit; delta < 0 = past surplus.
-  const delta = expectedByYesterday - donePast;
-
-  // Remaining non-KEY scheduled days (today included) to spread the adjustment over.
-  const remaining = sched.filter(d => !KEY_DAYS.includes(d) && WEEK.indexOf(d) >= todayIdx).length;
-  const adjustment = remaining > 0 ? Math.ceil(delta / remaining) : 0;
-
-  return Math.max(0, base + adjustment);
+  return Math.max(0, base + carry);
 }
 
 // Cardio target is static: setsPerSession, no redistribution.

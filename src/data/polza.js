@@ -7,12 +7,12 @@
 // localStorage. After 5s the snackbar dismisses and the archive becomes
 // effectively permanent (can be edited manually in localStorage / Sheet).
 
+// Mirrors the "Польза" tab in the plan sheet. Sheet is source-of-truth for humans;
+// app reads from this hardcoded copy (no live sheet sync in MVP).
 export const polza = [
-  { id: "smazat_krovat",   name: "Смазать кровать" },
-  { id: "polit_cvety",     name: "Полить цветы" },
-  { id: "postirat_kovyor", name: "Постирать ковёр" },
-  { id: "zakaz_noski",     name: "Заказать новые носки" },
-  { id: "pribrat_stol",    name: "Прибрать рабочий стол" },
+  { id: "balkon",     name: "Убраться на балконе" },
+  { id: "tarakany",   name: "Обновить ловушки от тараканов" },
+  { id: "krovat_skrip", name: "Скрип кровати" },
 ];
 
 export const polzaById = Object.fromEntries(polza.map(p => [p.id, p]));

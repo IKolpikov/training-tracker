@@ -1,6 +1,9 @@
 # Training Tracker MVP — Build Specification
 
-**Version:** 2.0 · **Date:** 26 May 2026
+**Version:** 2.1 · **Date:** 28 May 2026
+**Changes vs 2.0:** carry-based deficit/surplus (replaces averaged catch-up); ISO added to Пт;
+cardio sets refined (tempo=2, intervals=6); tonnage stored in Log for future charts;
+plan defaults synced with "Total load plan May 2026" sheet.
 **Changes vs 1.0:** cardio multi-field logging; strength catch-up redistribution; 04:00 day
 rollover; backend switched to Apps Script; fixed plan JSON; acceptance criteria updated for
 floating targets.
@@ -180,26 +183,34 @@ Body: JSON-объект, keyed по заголовкам Log
 On open / day change: `sync.loadWeek(weekIso)` тянет авторитетные строки, мержит непросланную
 очередь сверху. Очередь дренится на каждом действии (`drainQueue`).
 
-## 8. Catch-up Redistribution (новое в v2.0)
+## 8. Deficit / Surplus Carry (v2.1 — заменяет старое усреднение)
 
 Готовая логика — `src/utils/progress.js::strengthTargetToday()`. Правила:
 
-- **Только STR/ISO.** Cardio-недобор НЕ переносится (target cardio статичный).
-- **Только не-KEY дни.** Дефицит садится на Пн/Вт/Чт/Пт/Вс. Ср/Сб (tempo/intervals) не получают.
+- **Только STR/ISO.** Cardio target статичный (`setsPerSession`), не переносится.
+- **Дефицит** недобранных сетов переезжает на **ближайший следующий scheduled-день**
+  этого упражнения. Если и там недобрал — едет дальше.
+- **Профицит** (сделал больше, чем base сегодня) снимает с **ближайшего следующего scheduled-дня**.
+  День отображается зелёным `[0/0]`. Излишек профицита продолжает каскадировать, пока не
+  закончится или пока неделя не упёрлась в воскресенье.
+- **KEY-дни больше не исключаются** из math (Ср/Сб могут получать перенос). KEY_DAYS остался
+  только как визуальный бейдж "Key session".
 - **Бонус не добавляет новых карточек.** Если упражнения нет в `schedule[day].strength` —
-  target = 0, бонус ждёт ближайшего планового дня этого упражнения.
-- **Недельный сброс.** Расчёт берёт только текущий `week_iso`. Недобор сгорает в воскресенье
-  (граница 04:00 Вс→Пн). Долг не копится между неделями.
+  target = 0, перенос ждёт ближайшего планового дня этого упражнения.
+- **Недельный сброс.** Расчёт берёт только текущий `week_iso`. Долг не копится между неделями.
 
-Формула:
+Алгоритм:
 ```
-expected  = setsPerSession × (плановых дней упр. с начала недели по сегодня)
-done      = сетов упр. за текущий week_iso
-behind    = max(0, expected − done)
-remaining = плановые не-KEY дни упр. от сегодня до Вс включительно
-bonus     = ceil(behind / remaining)
-target    = base + bonus     (base = setsPerSession если упр. на карточке сегодня, иначе 0)
+carry = 0
+для каждого предыдущего scheduled-дня (хронологически):
+  donePrior = логов упражнения в этот день
+  carry = base + carry − donePrior      // знаковый: + = дефицит, − = профицит
+target_today = max(0, base + carry)
 ```
+
+**Инвариант (сверка с "Total load plan" вкладкой):**
+`SUM(planned_per_day) == total_load_per_exercise` — кроме случая когда профицит
+превысил оставшийся объём (тогда `SUM < total_load` — over-achievement).
 
 ## 9. Day Rollover — 04:00 (новое в v2.0)
 
