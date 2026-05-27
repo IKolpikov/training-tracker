@@ -21,22 +21,44 @@ import ProgressBar from "./components/ProgressBar.jsx";
 import MultiSetModal from "./components/MultiSetModal.jsx";
 
 export default function App() {
-  // viewedDate is a logical Date (shifted by −4h). Default = logical today.
   const [viewedDate, setViewedDate] = useState(() => logicalNow());
-  const [weekLogs, setWeekLogs]     = useState([]);
-  const [loading, setLoading]       = useState(true);
+
+  // ── logsMap: { [weekIso]: Log[] } ────────────────────────────────────────
+  // Keeps data for every week we've visited in memory.
+  // Navigating away and back to a week never loses optimistically-logged entries.
+  const [logsMap, setLogsMap] = useState({});
+
+  const [loading, setLoading]           = useState(true);
   const [multiSetExId, setMultiSetExId] = useState(null);
 
-  const dateStr = useMemo(() => toDateStr(viewedDate),       [viewedDate]);
-  const day     = useMemo(() => getRussianDay(viewedDate),   [viewedDate]);
-  const weekIso = useMemo(() => getWeekNumber(viewedDate),   [viewedDate]);
+  const dateStr = useMemo(() => toDateStr(viewedDate),     [viewedDate]);
+  const day     = useMemo(() => getRussianDay(viewedDate), [viewedDate]);
+  const weekIso = useMemo(() => getWeekNumber(viewedDate), [viewedDate]);
+
+  // weekLogs for the currently viewed week — derived, never lost on navigation
+  const weekLogs = logsMap[weekIso] || [];
+
+  // ── helpers ───────────────────────────────────────────────────────────────
+  // Merge server rows with optimistic entries not yet confirmed by the server.
+  // Uses timestamp as dedup key so we never double-count.
+  function mergeIntoMap(prev, iso, serverRows) {
+    const existing  = prev[iso] || [];
+    const serverTs  = new Set(serverRows.map(r => String(r.timestamp)));
+    const optimistic = existing.filter(r => !serverTs.has(String(r.timestamp)));
+    return { ...prev, [iso]: [...serverRows, ...optimistic] };
+  }
+
+  function addToMap(prev, iso, entries) {
+    return { ...prev, [iso]: [...(prev[iso] || []), ...entries] };
+  }
 
   // ── data loading ──────────────────────────────────────────────────────────
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const rows = await loadWeek(weekIso);
-      setWeekLogs(rows);
+      // Preserve optimistic entries not yet on the server
+      setLogsMap(prev => mergeIntoMap(prev, weekIso, rows));
     } finally {
       setLoading(false);
     }
@@ -61,7 +83,7 @@ export default function App() {
   );
 
   // ── navigation ────────────────────────────────────────────────────────────
-  // Future days are allowed — user sometimes logs ahead.
+  // Future days allowed — user sometimes logs ahead.
   const goPrev = () => setViewedDate(prev => {
     const d = new Date(prev); d.setDate(d.getDate() - 1); return d;
   });
@@ -70,26 +92,24 @@ export default function App() {
   });
 
   // ── logging helpers ───────────────────────────────────────────────────────
-  // Assembles a full Log-row object from exercise-specific fields.
-  // date/week_iso/day always reflect the VIEWED date (supports retrospective & advance logging).
-  // timestamp column A = real clock time (per CLAUDE.md invariant).
+  // Assembles a full Log-row. date/week_iso/day reflect the VIEWED date.
+  // timestamp column A = real clock time (CLAUDE.md invariant).
   function buildEntry(ex, fields, setNumber) {
     return {
-      timestamp: realTimestamp(),
-      date:      dateStr,
-      week_iso:  weekIso,
+      timestamp:     realTimestamp(),
+      date:          dateStr,
+      week_iso:      weekIso,
       day,
       exercise_id:   ex.id,
       exercise_name: ex.name,
       set_number:    setNumber,
-      // defaults for all Log columns; spread overwrites what's relevant
       reps: "", load: "", unit: "", notes: "",
       distance_km: "", duration_min: "", quality_min: "",
       ...fields
     };
   }
 
-  // [+] button: immediately log 1 set with exercise defaults, no modal.
+  // [+] button: log 1 set with defaults, no modal.
   const quickLog = (exId) => {
     const ex     = exerciseById[exId];
     const setNum = dayLogs.filter(r => r.exercise_id === exId).length + 1;
@@ -100,16 +120,15 @@ export default function App() {
     } else if (ex.type === "ISO") {
       fields = { reps: 1, load: ex.defaultLoad ?? "", unit: "sec" };
     } else {
-      // CARDIO: fill from cardioFields defaults
       for (const f of ex.cardioFields || []) fields[f.key] = f.default ?? "";
     }
 
     const entry = buildEntry(ex, fields, setNum);
     logSetOptimistic(entry);
-    setWeekLogs(prev => [...prev, entry]);
+    setLogsMap(prev => addToMap(prev, weekIso, [entry]));
   };
 
-  // Card tap: save all remaining sets from MultiSetModal in one go.
+  // Card tap: save all remaining sets from MultiSetModal.
   const saveMultipleSets = (entriesFields) => {
     const ex          = exerciseById[multiSetExId];
     const currentDone = dayLogs.filter(r => r.exercise_id === multiSetExId).length;
@@ -119,11 +138,11 @@ export default function App() {
     );
 
     for (const entry of newLogs) logSetOptimistic(entry);
-    setWeekLogs(prev => [...prev, ...newLogs]);
+    setLogsMap(prev => addToMap(prev, weekIso, newLogs));
     setMultiSetExId(null);
   };
 
-  // Compute target + done for the modal (based on viewed day, not logical today).
+  // Compute target + done for modal (relative to viewed day).
   const modalProps = useMemo(() => {
     if (!multiSetExId || !schedule[day]) return null;
     const isStrength = schedule[day].strength.includes(multiSetExId);
@@ -146,7 +165,8 @@ export default function App() {
 
   return (
     <DayContext.Provider value={ctx}>
-      <div className="mx-auto max-w-[420px] min-h-full flex flex-col pb-20">
+      {/* pb-28 = room for two fixed progress bars */}
+      <div className="mx-auto max-w-[420px] min-h-full flex flex-col pb-28">
         <DayHeader />
         <main className="flex-1 px-4 py-3">
           <ExerciseList />

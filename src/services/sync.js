@@ -25,7 +25,7 @@ export async function drainQueue() {
   return remaining.length === 0;
 }
 
-// On open / day change: pull authoritative rows, merge unsynced queue items on top.
+// On open / week change: pull authoritative rows, merge unsynced queue on top (no dupes).
 export async function loadWeek(weekIso) {
   let rows;
   try {
@@ -34,6 +34,11 @@ export async function loadWeek(weekIso) {
   } catch {
     rows = getCachedWeekLogs(weekIso); // offline fallback
   }
-  const pending = getQueue().filter(e => String(e.week_iso) === String(weekIso));
+  // Add only queue entries whose timestamp isn't already in rows
+  // (prevents doubling when cache + queue both hold the same entry)
+  const seen = new Set(rows.map(r => String(r.timestamp)));
+  const pending = getQueue()
+    .filter(e => String(e.week_iso) === String(weekIso))
+    .filter(e => !seen.has(String(e.timestamp)));
   return [...rows, ...pending];
 }
