@@ -25,6 +25,14 @@ export async function drainQueue() {
   return remaining.length === 0;
 }
 
+// Remove a single entry from queue + cache (best-effort undo for unsynced sets).
+// Already-synced entries will reappear on next loadWeek from the server.
+export function removeOptimistic(timestamp, weekIso) {
+  const ts = String(timestamp);
+  setQueue(getQueue().filter(e => String(e.timestamp) !== ts));
+  setCachedWeekLogs(weekIso, getCachedWeekLogs(weekIso).filter(r => String(r.timestamp) !== ts));
+}
+
 // On open / week change: pull authoritative rows, merge unsynced queue on top (no dupes).
 export async function loadWeek(weekIso) {
   let rows;

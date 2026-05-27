@@ -9,7 +9,7 @@ export default function DayHeader() {
         <button
           onClick={goPrev}
           disabled={prevDisabled}
-          className="w-12 h-12 flex items-center justify-center rounded-full text-2xl text-slate-300 active:bg-slate-800 disabled:text-slate-700 disabled:active:bg-transparent"
+          className="w-12 h-12 flex items-center justify-center rounded-full text-2xl text-slate-300 active:bg-slate-800 disabled:text-slate-700 disabled:opacity-30 disabled:pointer-events-none disabled:active:bg-transparent"
           aria-label="Предыдущий день"
         >‹</button>
 

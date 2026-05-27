@@ -15,7 +15,7 @@ const STATE_STYLES = {
 };
 
 export default function ExerciseCard({ exId, kind }) {
-  const { day, dateStr, weekLogs, dayLogs, openMultiSet, quickLog } = useDay();
+  const { day, dateStr, weekLogs, dayLogs, openMultiSet, quickLog, removeLastSet } = useDay();
   const ex = exerciseById[exId];
   if (!ex) return null;
 
@@ -28,9 +28,15 @@ export default function ExerciseCard({ exId, kind }) {
 
   return (
     <div
-      className={`flex items-center gap-3 rounded-xl border bg-slate-900 px-3 py-3 cursor-pointer active:bg-slate-800 transition-opacity ${STATE_STYLES[state]}`}
+      className={`relative flex items-center gap-3 rounded-xl border bg-slate-900 px-3 py-3 cursor-pointer active:bg-slate-800 transition-opacity ${STATE_STYLES[state]}`}
       onClick={() => openMultiSet(exId)}
     >
+      {/* Invisible [-] button: left edge, same footprint as [+]. Tap to undo last set. */}
+      <button
+        onClick={e => { e.stopPropagation(); removeLastSet(exId); }}
+        className="absolute left-0 top-0 h-full w-12 opacity-0 rounded-l-xl"
+        aria-label={`Удалить последний сет: ${ex.name}`}
+      />
       {/* Name + description */}
       <div className="flex-1 min-w-0">
         <div className="text-base font-medium truncate">{ex.name}</div>

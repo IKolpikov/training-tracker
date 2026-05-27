@@ -7,7 +7,7 @@ import {
   logicalNow,
   realTimestamp
 } from "./utils/date.js";
-import { loadWeek, logSetOptimistic, drainQueue } from "./services/sync.js";
+import { loadWeek, logSetOptimistic, drainQueue, removeOptimistic } from "./services/sync.js";
 import { exerciseById } from "./data/plan.js";
 import { schedule } from "./data/schedule.js";
 import {
@@ -87,7 +87,12 @@ export default function App() {
 
   // ── navigation ────────────────────────────────────────────────────────────
   // History starts at HISTORY_START; future days are allowed (advance logging).
-  const prevDisabled = useMemo(() => dateStr <= HISTORY_START, [dateStr]);
+  // Disable ‹ when going back one more day would go before HISTORY_START.
+  const prevDisabled = useMemo(() => {
+    const d = new Date(viewedDate);
+    d.setDate(d.getDate() - 1);
+    return toDateStr(d) < HISTORY_START;
+  }, [viewedDate]);
 
   const goPrev = () => setViewedDate(prev => {
     const d = new Date(prev); d.setDate(d.getDate() - 1);
@@ -149,6 +154,20 @@ export default function App() {
     setMultiSetExId(null);
   };
 
+  // Minus button: remove the last logged set for an exercise on the viewed day.
+  // Removes from React state immediately; also cleans queue+cache for unsynced entries.
+  // Already-synced entries reappear on the next server refresh (acceptable MVP trade-off).
+  const removeLastSet = (exId) => {
+    const entries = dayLogs.filter(r => r.exercise_id === exId);
+    if (entries.length === 0) return;
+    const last = entries[entries.length - 1];
+    setLogsMap(prev => ({
+      ...prev,
+      [weekIso]: (prev[weekIso] || []).filter(r => String(r.timestamp) !== String(last.timestamp)),
+    }));
+    removeOptimistic(last.timestamp, weekIso);
+  };
+
   // Compute target + done for modal (relative to viewed day).
   const modalProps = useMemo(() => {
     if (!multiSetExId || !schedule[day]) return null;
@@ -164,7 +183,7 @@ export default function App() {
   const ctx = {
     viewedDate, dateStr, day, weekIso,
     weekLogs, dayLogs, loading,
-    quickLog,
+    quickLog, removeLastSet,
     openMultiSet: setMultiSetExId,
     refresh,
     goPrev, goNext, prevDisabled,

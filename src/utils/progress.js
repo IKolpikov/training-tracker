@@ -24,16 +24,18 @@ export function strengthTargetToday(exId, day, weekLogs) {
   const sched = scheduledDays(exId);
   const todayIdx = WEEK.indexOf(day);
 
-  // How many sets SHOULD be done by end of today, given week so far.
+  // Sets that SHOULD be done by end of today.
   const expected = sched.filter(d => WEEK.indexOf(d) <= todayIdx).length * ex.setsPerSession;
   const done = weekLogs.filter(r => r.exercise_id === exId).length;
-  const behind = Math.max(0, expected - done);
 
-  // Remaining non-KEY scheduled days, today included, to spread the deficit over.
+  // deficit > 0 = catch-up needed; deficit < 0 = surplus, reduce future targets.
+  const deficit = expected - done;
+
+  // Remaining non-KEY scheduled days (today included) to spread adjustment over.
   const remaining = sched.filter(d => !KEY_DAYS.includes(d) && WEEK.indexOf(d) >= todayIdx).length;
-  const bonus = remaining > 0 ? Math.ceil(behind / remaining) : 0;
+  const adjustment = remaining > 0 ? Math.ceil(deficit / remaining) : 0;
 
-  return base + bonus;
+  return Math.max(0, base + adjustment);
 }
 
 // Cardio target is static: setsPerSession, no redistribution.
@@ -47,7 +49,9 @@ export function doneToday(exId, dateStr, dayLogs) {
 }
 
 // Card state for UI. "complete" gates on done >= target (target is floating now).
+// target can be 0 when surplus absorbed all remaining sets for today.
 export function cardState(done, target) {
+  if (target === 0) return "complete";     // surplus absorbed; nothing needed today
   if (done === 0) return "not_started";
   if (done < target) return "in_progress";
   if (done === target) return "complete";
