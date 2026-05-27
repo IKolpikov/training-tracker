@@ -13,7 +13,15 @@ function scheduledDays(exId) {
 }
 
 // weekLogs: array of Log rows for the CURRENT week_iso (already filtered).
-// Returns today's target set count for a strength exercise, with catch-up baked in.
+// Returns today's target set count for a strength exercise, with catch-up/surplus baked in.
+//
+// Key rule: today's target depends ONLY on PAST days' logs (r.day < today's day-of-week).
+// Logging on TODAY changes the [done/target] counter but does NOT change the target itself.
+// This avoids the "target jumps when I start logging" UX confusion.
+//
+//  - PAST deficit (missed sets from earlier days)  -> spread bonus over today + future non-KEY days
+//  - PAST surplus (extra sets in earlier days)     -> spread reduction over today + future non-KEY days
+//    (on the first scheduled day there's no past, so no adjustment ever fires here -> stays at base)
 export function strengthTargetToday(exId, day, weekLogs) {
   const ex = exerciseById[exId];
   const onCardToday = schedule[day].strength.includes(exId);
@@ -24,16 +32,21 @@ export function strengthTargetToday(exId, day, weekLogs) {
   const sched = scheduledDays(exId);
   const todayIdx = WEEK.indexOf(day);
 
-  // Sets that SHOULD be done by end of today.
-  const expected = sched.filter(d => WEEK.indexOf(d) <= todayIdx).length * ex.setsPerSession;
-  const done = weekLogs.filter(r => r.exercise_id === exId).length;
+  // Sets that SHOULD have been done by END OF YESTERDAY.
+  const pastSessions = sched.filter(d => WEEK.indexOf(d) < todayIdx).length;
+  const expectedByYesterday = pastSessions * ex.setsPerSession;
 
-  // deficit > 0 = catch-up needed; deficit < 0 = surplus, reduce future targets.
-  const deficit = expected - done;
+  // Sets actually logged in past days (excluding today's logs).
+  const donePast = weekLogs.filter(
+    r => r.exercise_id === exId && WEEK.indexOf(r.day) < todayIdx
+  ).length;
 
-  // Remaining non-KEY scheduled days (today included) to spread adjustment over.
+  // delta > 0 = past deficit; delta < 0 = past surplus.
+  const delta = expectedByYesterday - donePast;
+
+  // Remaining non-KEY scheduled days (today included) to spread the adjustment over.
   const remaining = sched.filter(d => !KEY_DAYS.includes(d) && WEEK.indexOf(d) >= todayIdx).length;
-  const adjustment = remaining > 0 ? Math.ceil(deficit / remaining) : 0;
+  const adjustment = remaining > 0 ? Math.ceil(delta / remaining) : 0;
 
   return Math.max(0, base + adjustment);
 }
