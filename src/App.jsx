@@ -20,6 +20,9 @@ import ExerciseList from "./components/ExerciseList.jsx";
 import ProgressBar from "./components/ProgressBar.jsx";
 import MultiSetModal from "./components/MultiSetModal.jsx";
 
+// Earliest date user can navigate to. History starts here.
+const HISTORY_START = "2026-05-25";
+
 export default function App() {
   const [viewedDate, setViewedDate] = useState(() => logicalNow());
 
@@ -83,9 +86,13 @@ export default function App() {
   );
 
   // ── navigation ────────────────────────────────────────────────────────────
-  // Future days allowed — user sometimes logs ahead.
+  // History starts at HISTORY_START; future days are allowed (advance logging).
+  const prevDisabled = useMemo(() => dateStr <= HISTORY_START, [dateStr]);
+
   const goPrev = () => setViewedDate(prev => {
-    const d = new Date(prev); d.setDate(d.getDate() - 1); return d;
+    const d = new Date(prev); d.setDate(d.getDate() - 1);
+    // Block navigation before history start
+    return toDateStr(d) < HISTORY_START ? prev : d;
   });
   const goNext = () => setViewedDate(prev => {
     const d = new Date(prev); d.setDate(d.getDate() + 1); return d;
@@ -160,7 +167,7 @@ export default function App() {
     quickLog,
     openMultiSet: setMultiSetExId,
     refresh,
-    goPrev, goNext,
+    goPrev, goNext, prevDisabled,
   };
 
   return (
