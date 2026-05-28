@@ -1,22 +1,18 @@
 import { useDay } from "../DayContext.jsx";
 import { useConfig } from "../useConfig.js";
-import { isPolzaLog, polzaIdFromLog } from "../data/polza.js";
 import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
 
-// Польза per viewed day:
+// Польза per viewed day. Done-state comes from polzaLog (server-derived, cross-device):
 //  - Today or future view: show active backlog items + items done on this day (with ✓)
 //  - Past day view:        show ONLY items done on that exact day (history mode, no actives)
-//  Items done on OTHER days don't show on today's view (they're archived).
+//  Items done on OTHER days don't show on today's view (they're archived lifetime).
 export default function PolzaView() {
-  const { dateStr, dayLogs, polzaDoneIds, logPolza } = useDay();
+  const { dateStr, polzaLog, logPolza } = useDay();
   const { polza } = useConfig();
 
-  // ids done on the viewed day (via Log entries)
-  const doneViewedIds = new Set(
-    dayLogs
-      .filter(r => isPolzaLog(r.exercise_id))
-      .map(r => polzaIdFromLog(r.exercise_id))
-  );
+  // ids done on the viewed day, and ids done ever (lifetime archive) — both from polzaLog
+  const doneViewedIds = new Set(polzaLog.filter(e => e.date === dateStr).map(e => e.id));
+  const archivedIds   = new Set(polzaLog.map(e => e.id));
 
   const todayStr = toDateStr(logicalNow());
   const isPast   = dateStr < todayStr;
@@ -25,7 +21,7 @@ export default function PolzaView() {
   const items = polza.filter(p => {
     if (doneViewedIds.has(p.id)) return true;     // done on this day → always show with ✓
     if (isPast) return false;                      // past day, not done that day → hide
-    if (polzaDoneIds.has(p.id)) return false;     // already archived (done some other day)
+    if (archivedIds.has(p.id)) return false;      // already archived (done some other day)
     return true;                                   // active backlog item, viewing today/future
   });
 

@@ -10,6 +10,14 @@ export async function fetchWeekLogs(weekIso) {
   return data.rows; // array of Log row objects
 }
 
+// All-time logs (no week filter). Used for Польза lifetime done-state.
+export async function fetchAllLogs() {
+  const res = await fetch(`${API_URL}?action=logs`);
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "fetch logs failed");
+  return data.rows;
+}
+
 // Fetch a config tab from the sheet. Returns raw row array (callers re-shape).
 async function fetchConfigTab_(action) {
   const res = await fetch(`${API_URL}?action=${action}`);

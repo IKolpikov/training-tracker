@@ -9,6 +9,7 @@ import {
 } from "./utils/date.js";
 import { loadWeek, logSetOptimistic, drainQueue, removeOptimistic } from "./services/sync.js";
 import { fetchConfig, getCachedConfig, setCachedConfig } from "./services/config.js";
+import { fetchAllLogs } from "./services/sheets.js";
 import { setConfig as setConfigStore } from "./data/configStore.js";
 import { useConfig } from "./useConfig.js";
 import {
@@ -19,8 +20,8 @@ import {
 import { habitLogId } from "./data/habits.js";
 import {
   polzaLogId,
-  getPolzaDoneIds,
-  persistPolzaDoneIds,
+  isPolzaLog,
+  polzaIdFromLog,
 } from "./data/polza.js";
 import DayHeader from "./components/DayHeader.jsx";
 import ExerciseList from "./components/ExerciseList.jsx";
@@ -54,9 +55,11 @@ export default function App() {
   // Tab navigation: "sport" | "habits" | "polza".
   const [activeTab, setActiveTab] = useState("sport");
 
-  // Польза archive (lifetime done ids), persisted to localStorage.
-  const [polzaDoneIds, setPolzaDoneIds] = useState(() => getPolzaDoneIds());
-  useEffect(() => { persistPolzaDoneIds(polzaDoneIds); }, [polzaDoneIds]);
+  // Польза done-state is SERVER-DRIVEN (cross-device). polzaLog holds all-time
+  // polza_* log rows as { id, date, timestamp }. Done/archive derives from this,
+  // not from device-local storage. Optimistic entries added on tap, reconciled
+  // on every refresh from the Log tab.
+  const [polzaLog, setPolzaLog] = useState([]);
 
   // Undo snackbar state: { kind: "polza", id, timestamp } | null
   const [undoState, setUndoState] = useState(null);
@@ -120,22 +123,46 @@ export default function App() {
     }
   }, []);
 
+  // Pull all-time Польза done-state from the Log tab (cross-device source of truth).
+  const refreshPolzaLog = useCallback(async () => {
+    try {
+      const all = await fetchAllLogs();
+      setPolzaLog(
+        all
+          .filter(r => isPolzaLog(r.exercise_id))
+          .map(r => ({
+            id: polzaIdFromLog(r.exercise_id),
+            date: String(r.date),
+            timestamp: String(r.timestamp),
+          }))
+      );
+    } catch { /* offline / failure → keep current optimistic state */ }
+  }, []);
+
+  // The ⟳ button refreshes both plan-config and Польза done-state.
+  const refreshAll = useCallback(() => {
+    refreshConfig();
+    refreshPolzaLog();
+  }, [refreshConfig, refreshPolzaLog]);
+
   useEffect(() => {
     const cached = getCachedConfig();
     if (cached) setConfigStore(cached);  // instant paint from cache
-    refreshConfig();                      // then fetch fresh
-  }, [refreshConfig]);
+    refreshConfig();                      // then fetch fresh config
+    refreshPolzaLog();                    // and Польза done-state
+  }, [refreshConfig, refreshPolzaLog]);
 
-  // Drain offline queue on tab focus / reconnect
+  // Drain offline queue on tab focus / reconnect; also re-pull Польза state.
   useEffect(() => {
-    const tryDrain = () => drainQueue().then(() => refresh()).catch(() => {});
+    const tryDrain = () =>
+      drainQueue().then(() => { refresh(); refreshPolzaLog(); }).catch(() => {});
     window.addEventListener("focus",  tryDrain);
     window.addEventListener("online", tryDrain);
     return () => {
       window.removeEventListener("focus",  tryDrain);
       window.removeEventListener("online", tryDrain);
     };
-  }, [refresh]);
+  }, [refresh, refreshPolzaLog]);
 
   const dayLogs = useMemo(
     () => weekLogs.filter(r => String(r.date) === dateStr),
@@ -241,26 +268,24 @@ export default function App() {
   };
 
   // ── Польза ────────────────────────────────────────────────────────────────
+  // Done-state lives in polzaLog (server-derived). We add an optimistic entry
+  // immediately and the next refresh reconciles it with the Log tab.
   const logPolza = (id) => {
     const p = polzaById[id];
     if (!p) return;
     const entry = buildEntry({ id: polzaLogId(id), name: p.name }, {}, 1);
     logSetOptimistic(entry);
     setLogsMap(prev => addToMap(prev, weekIso, [entry]));
-    setPolzaDoneIds(prev => new Set([...prev, id]));
+    setPolzaLog(prev => [...prev, { id, date: dateStr, timestamp: String(entry.timestamp) }]);
     setUndoState({ kind: "polza", id, timestamp: entry.timestamp });
   };
 
   const undoPolza = () => {
     if (!undoState || undoState.kind !== "polza") return;
-    const { id, timestamp } = undoState;
+    const { timestamp } = undoState;
     setLogsMap(prev => removeFromMap(prev, weekIso, timestamp));
     removeOptimistic(timestamp, weekIso);
-    setPolzaDoneIds(prev => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+    setPolzaLog(prev => prev.filter(e => e.timestamp !== String(timestamp)));
     setUndoState(null);
   };
 
@@ -285,9 +310,9 @@ export default function App() {
     goPrev, goNext, prevDisabled,
     // Habits + Польза
     logHabit, removeHabit,
-    polzaDoneIds, logPolza,
-    // Config refresh (pull plan/habits/polza from sheet)
-    refreshConfig, configLoading, configError,
+    polzaLog, logPolza,
+    // Config refresh (pull plan/habits/polza from sheet) + Польза done-state
+    refreshConfig: refreshAll, configLoading, configError,
   };
 
   // Bottom padding: Sport view has fixed ProgressBar (h~88) + TabBar (h-14) above it.
