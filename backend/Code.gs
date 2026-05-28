@@ -13,7 +13,8 @@
  * Set them to the same value if you keep everything in one file.
  */
 
-const SHEET_ID        = "1lyS3o-XYav5KDUyvxz5uCxPADEmUir1lea2tTD8D59g";
+// Single-file setup: Log + plan/habits/polza all live in the same spreadsheet.
+const SHEET_ID        = "1t_YwNTPT64YV-5lfMH5lIN-eypeiNIaZKB13IRcCDYk";
 const CONFIG_SHEET_ID = "1t_YwNTPT64YV-5lfMH5lIN-eypeiNIaZKB13IRcCDYk";
 
 const LOG_TAB     = "Log";
