@@ -336,7 +336,10 @@ export default function App() {
       ? strengthTargetToday(multiSetExId, day, weekLogs)
       : cardioTargetToday(multiSetExId, day);
     const done = doneToday(multiSetExId, dateStr, dayLogs);
-    return { target, done };
+    // Actual logged rows (reps/load) for this exercise on the viewed day, in order —
+    // so the modal shows what was really entered, refreshed from the server by loadWeek.
+    const entries = dayLogs.filter(r => r.exercise_id === multiSetExId);
+    return { target, done, entries };
   }, [multiSetExId, day, weekLogs, dayLogs, dateStr]);
 
   // ── context ───────────────────────────────────────────────────────────────
@@ -385,6 +388,7 @@ export default function App() {
             exercise={exerciseById[multiSetExId]}
             target={modalProps.target}
             done={modalProps.done}
+            loggedSets={modalProps.entries}
             onClose={() => setMultiSetExId(null)}
             onSave={saveMultipleSets}
           />

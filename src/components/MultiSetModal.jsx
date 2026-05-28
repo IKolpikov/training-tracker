@@ -35,6 +35,16 @@ function blockFields(ex) {
   }));
 }
 
+// Build block values from an actual logged row (real reps/load/cardio), not defaults.
+function blockFromEntry(ex, entry) {
+  const s = (v) => (v === null || v === undefined || v === "") ? "" : String(v);
+  if (ex.type === "STR") return { reps: s(entry.reps), load: s(entry.load) };
+  if (ex.type === "ISO") return { load: s(entry.load) };
+  const o = {};
+  for (const f of ex.cardioFields || []) o[f.key] = s(entry[f.key]);
+  return o;
+}
+
 function toEntryFields(ex, vals) {
   const n = (v) => (v !== "" && v !== null && v !== undefined && !isNaN(+v)) ? +v : "";
   if (ex.type === "STR") return { reps: n(vals.reps), load: n(vals.load), unit: ex.unit || "" };
@@ -46,13 +56,16 @@ function toEntryFields(ex, vals) {
 
 // ─── component ──────────────────────────────────────────────────────────────
 
-export default function MultiSetModal({ exercise, target, done, onClose, onSave }) {
-  const N = Math.max(target, 1);
+export default function MultiSetModal({ exercise, target, done, loggedSets = [], onClose, onSave }) {
+  // Show at least every logged set (even if done > target, i.e. overlogged).
+  const N = Math.max(target, done, 1);
   const remaining = Math.max(0, target - done);
 
-  // N blocks, all pre-filled with exercise defaults
+  // Done blocks → REAL logged values (reps/load from server); the rest → defaults.
   const [sets, setSets] = useState(() =>
-    Array.from({ length: N }, () => ({ ...blockDefault(exercise) }))
+    Array.from({ length: N }, (_, i) =>
+      i < loggedSets.length ? blockFromEntry(exercise, loggedSets[i]) : { ...blockDefault(exercise) }
+    )
   );
 
   const touchStartX = useRef(null);
