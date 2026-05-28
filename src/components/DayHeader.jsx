@@ -14,7 +14,11 @@ export default function DayHeader() {
   else if (lastSync && !lastSync.ok) dot = { cls: "bg-rose-500", label: `Ошибка связи: ${lastSync.error || "сервер не ответил"}` };
 
   return (
-    <header className="sticky top-0 z-10 bg-slate-950/95 backdrop-blur border-b border-slate-800">
+    <header className="relative sticky top-0 z-10 bg-slate-950/95 backdrop-blur border-b border-slate-800">
+      {/* Build stamp — verify which bundle the browser is actually running. */}
+      <span className="absolute top-0.5 right-1.5 text-[9px] leading-none text-slate-600 tabular-nums">
+        {typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "dev"}
+      </span>
       <div className="flex items-center justify-between px-2 py-3">
         <button
           onClick={goPrev}
