@@ -114,9 +114,7 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
     touchStartY.current = null;
   };
 
-  const okLabel = remaining > 0
-    ? `ОК · сохранить ${remaining} ${remaining === 1 ? "сет" : remaining < 5 ? "сета" : "сетов"}`
-    : "ОК";
+  const okLabel = "Done";
 
   return (
     <div
