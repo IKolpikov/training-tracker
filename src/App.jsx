@@ -158,19 +158,22 @@ export default function App() {
     }
   }, []);
 
-  // The ⟳ button: refresh plan-config + Польза done-state + flush pending writes.
-  // Green when the backend answered with real plan data OR a queued write landed.
-  // Red when the server didn't respond with usable data.
+  // The ⟳ button: flush pending writes, then RE-PULL everything authoritative —
+  // current week's sport logs (loadWeek), Польза done-state, and plan-config.
+  // Order matters: drain first so our own writes are on the server before we
+  // re-read, then loadWeek reconciles sport counts across devices.
+  // Green when the backend answered with real data OR a queued write landed.
   const refreshAll = useCallback(async () => {
-    const fresh = await refreshConfig();
-    refreshPolzaLog();
     let wrote = { appended: 0, deleted: 0, failed: 0, ok: true };
     try { wrote = await drainQueue(); } catch { wrote.ok = false; }
+    await refresh();          // re-pull current week's logs → sport counts reconcile
+    refreshPolzaLog();        // re-pull Польза done-state
+    const fresh = await refreshConfig();
     const gotRealData    = !!fresh && Array.isArray(fresh.exercises) && fresh.exercises.length > 0;
     const wroteSomething = wrote.ok && (wrote.appended + wrote.deleted) > 0;
     if (gotRealData || wroteSomething) setLastSync({ ok: true });
     else setLastSync({ ok: false, error: "сервер не ответил данными" });
-  }, [refreshConfig, refreshPolzaLog]);
+  }, [refresh, refreshConfig, refreshPolzaLog]);
 
   useEffect(() => {
     const cached = getCachedConfig();
