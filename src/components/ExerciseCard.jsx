@@ -1,5 +1,5 @@
 import { useDay } from "../DayContext.jsx";
-import { exerciseById } from "../data/plan.js";
+import { useConfig } from "../useConfig.js";
 import {
   cardState,
   cardioTargetToday,
@@ -16,6 +16,7 @@ const STATE_STYLES = {
 
 export default function ExerciseCard({ exId, kind }) {
   const { day, dateStr, weekLogs, dayLogs, openMultiSet, quickLog, removeLastSet } = useDay();
+  const { exerciseById } = useConfig();
   const ex = exerciseById[exId];
   if (!ex) return null;
 

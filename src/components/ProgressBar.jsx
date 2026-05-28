@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { useDay } from "../DayContext.jsx";
+import { useConfig } from "../useConfig.js";
 import { dayProgress } from "../utils/progress.js";
-import { WEEK, schedule } from "../data/schedule.js";
-import { exerciseById } from "../data/plan.js";
+import { WEEK } from "../data/schedule.js";
 import { isHabitLog } from "../data/habits.js";
 import { isPolzaLog } from "../data/polza.js";
 import WeekStatsModal from "./WeekStatsModal.jsx";
@@ -17,18 +17,25 @@ function barColor(pct) {
 }
 
 // Total scheduled sets for the whole week (base setsPerSession, no catch-up).
-const WEEK_TARGET = (() => {
+// Recomputed whenever config changes (sheet refresh swaps schedule + setsPerSession).
+function computeWeekTarget(schedule, exerciseById) {
   let t = 0;
   for (const d of WEEK) {
-    for (const id of schedule[d].strength) t += exerciseById[id].setsPerSession;
-    for (const id of schedule[d].cardio)   t += exerciseById[id].setsPerSession;
+    for (const id of schedule[d].strength) t += (exerciseById[id]?.setsPerSession || 0);
+    for (const id of schedule[d].cardio)   t += (exerciseById[id]?.setsPerSession || 0);
   }
   return t;
-})();
+}
 
 export default function ProgressBar() {
   const { day, dateStr, weekIso, weekLogs, dayLogs } = useDay();
+  const { schedule, exerciseById } = useConfig();
   const [showWeekStats, setShowWeekStats] = useState(false);
+
+  const WEEK_TARGET = useMemo(
+    () => computeWeekTarget(schedule, exerciseById),
+    [schedule, exerciseById]
+  );
 
   // Day progress
   const { completed, totalTarget, pct: dayPct } = dayProgress(day, dateStr, weekLogs, dayLogs);

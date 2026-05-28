@@ -8,19 +8,16 @@ import {
   realTimestamp
 } from "./utils/date.js";
 import { loadWeek, logSetOptimistic, drainQueue, removeOptimistic } from "./services/sync.js";
-import { exerciseById } from "./data/plan.js";
-import { schedule } from "./data/schedule.js";
+import { fetchConfig, getCachedConfig, setCachedConfig } from "./services/config.js";
+import { setConfig as setConfigStore } from "./data/configStore.js";
+import { useConfig } from "./useConfig.js";
 import {
   cardioTargetToday,
   doneToday,
   strengthTargetToday
 } from "./utils/progress.js";
+import { habitLogId } from "./data/habits.js";
 import {
-  habits,
-  habitLogId,
-} from "./data/habits.js";
-import {
-  polzaById,
   polzaLogId,
   getPolzaDoneIds,
   persistPolzaDoneIds,
@@ -38,6 +35,12 @@ import UndoSnackbar from "./components/UndoSnackbar.jsx";
 const HISTORY_START = "2026-05-25";
 
 export default function App() {
+  // Live config from store (plan/schedule/habits/polza). Sheet is source of truth;
+  // defaults seed bootstrap before fetch returns.
+  const { exerciseById, schedule, habits, polzaById } = useConfig();
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configError,   setConfigError]   = useState(null);
+
   const [viewedDate, setViewedDate] = useState(() => logicalNow());
 
   // ── logsMap: { [weekIso]: Log[] } ────────────────────────────────────────
@@ -99,6 +102,29 @@ export default function App() {
   }, [weekIso]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // ── config loading (plan / habits / polza from sheet) ─────────────────────
+  // Bootstrap order: hardcoded defaults (already in store) → cached → server.
+  // Failure paths fall back gracefully; the app always renders SOMETHING.
+  const refreshConfig = useCallback(async () => {
+    setConfigLoading(true);
+    setConfigError(null);
+    try {
+      const fresh = await fetchConfig();
+      setConfigStore(fresh);
+      setCachedConfig(fresh);
+    } catch (err) {
+      setConfigError(String(err.message || err));
+    } finally {
+      setConfigLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const cached = getCachedConfig();
+    if (cached) setConfigStore(cached);  // instant paint from cache
+    refreshConfig();                      // then fetch fresh
+  }, [refreshConfig]);
 
   // Drain offline queue on tab focus / reconnect
   useEffect(() => {
@@ -260,6 +286,8 @@ export default function App() {
     // Habits + Польза
     logHabit, removeHabit,
     polzaDoneIds, logPolza,
+    // Config refresh (pull plan/habits/polza from sheet)
+    refreshConfig, configLoading, configError,
   };
 
   // Bottom padding: Sport view has fixed ProgressBar (h~88) + TabBar (h-14) above it.

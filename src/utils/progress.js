@@ -15,10 +15,11 @@
 //   carry_out = base + carry_in - done   (unclamped — so surplus excess is preserved)
 //   target_today = max(0, base + carry)
 
-import { WEEK, schedule } from "../data/schedule.js";
-import { exerciseById } from "../data/plan.js";
+import { WEEK } from "../data/schedule.js";          // WEEK is a static constant
+import { getConfig } from "../data/configStore.js"; // dynamic — pulls latest config each call
 
 function scheduledDays(exId) {
+  const { schedule } = getConfig();
   return WEEK.filter(d => schedule[d].strength.includes(exId));
 }
 
@@ -32,7 +33,9 @@ function scheduledDays(exId) {
 // Today's own logs do NOT change today's target; logging on a past day retroactively
 // recomputes downstream day targets (which is the desired behavior).
 export function strengthTargetToday(exId, day, weekLogs) {
+  const { exerciseById, schedule } = getConfig();
   const ex = exerciseById[exId];
+  if (!ex) return 0;
   const onCardToday = schedule[day].strength.includes(exId);
   if (!onCardToday) return 0;
   const base = ex.setsPerSession;
@@ -55,7 +58,10 @@ export function strengthTargetToday(exId, day, weekLogs) {
 
 // Cardio target is static: setsPerSession, no redistribution.
 export function cardioTargetToday(exId, day) {
-  return schedule[day].cardio.includes(exId) ? exerciseById[exId].setsPerSession : 0;
+  const { exerciseById, schedule } = getConfig();
+  if (!schedule[day].cardio.includes(exId)) return 0;
+  const ex = exerciseById[exId];
+  return ex ? ex.setsPerSession : 0;
 }
 
 // Sets logged for an exercise on a specific logical date.
@@ -75,6 +81,7 @@ export function cardState(done, target) {
 
 // Day progress %: completed (capped per exercise) / total target sets for the day.
 export function dayProgress(day, dateStr, weekLogs, dayLogs) {
+  const { schedule } = getConfig();
   let totalTarget = 0, completed = 0;
   for (const exId of schedule[day].strength) {
     const t = strengthTargetToday(exId, day, weekLogs);

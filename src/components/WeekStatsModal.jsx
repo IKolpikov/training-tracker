@@ -1,21 +1,23 @@
 import { useMemo } from "react";
-import { WEEK, schedule } from "../data/schedule.js";
-import { exerciseById } from "../data/plan.js";
+import { WEEK } from "../data/schedule.js";
+import { useConfig } from "../useConfig.js";
 
 // Build ordered unique breakdown of exercises for the full week.
 // Strength first (in first-appearance order), then cardio.
-function buildBreakdown(weekLogs) {
+function buildBreakdown(weekLogs, schedule, exerciseById) {
   const strengthMap = new Map(); // exId → { target }
   const cardioMap   = new Map();
 
   for (const day of WEEK) {
     for (const exId of schedule[day].strength) {
+      const ex = exerciseById[exId]; if (!ex) continue;
       if (!strengthMap.has(exId)) strengthMap.set(exId, { target: 0 });
-      strengthMap.get(exId).target += exerciseById[exId].setsPerSession;
+      strengthMap.get(exId).target += ex.setsPerSession;
     }
     for (const exId of schedule[day].cardio) {
+      const ex = exerciseById[exId]; if (!ex) continue;
       if (!cardioMap.has(exId)) cardioMap.set(exId, { target: 0 });
-      cardioMap.get(exId).target += exerciseById[exId].setsPerSession;
+      cardioMap.get(exId).target += ex.setsPerSession;
     }
   }
 
@@ -59,7 +61,11 @@ function ExRow({ row }) {
 }
 
 export default function WeekStatsModal({ weekIso, weekLogs, onClose }) {
-  const { strength, cardio } = useMemo(() => buildBreakdown(weekLogs), [weekLogs]);
+  const { schedule, exerciseById } = useConfig();
+  const { strength, cardio } = useMemo(
+    () => buildBreakdown(weekLogs, schedule, exerciseById),
+    [weekLogs, schedule, exerciseById]
+  );
 
   const totalTarget = useMemo(
     () => strength.reduce((s, r) => s + r.target, 0) + cardio.reduce((s, r) => s + r.target, 0),

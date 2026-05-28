@@ -2,7 +2,11 @@ import { useDay } from "../DayContext.jsx";
 import { headerLabel } from "../utils/date.js";
 
 export default function DayHeader() {
-  const { viewedDate, goPrev, goNext, prevDisabled } = useDay();
+  const {
+    viewedDate, goPrev, goNext, prevDisabled,
+    refreshConfig, configLoading, configError,
+  } = useDay();
+
   return (
     <header className="sticky top-0 z-10 bg-slate-950/95 backdrop-blur border-b border-slate-800">
       <div className="flex items-center justify-between px-2 py-3">
@@ -13,8 +17,18 @@ export default function DayHeader() {
           aria-label="Предыдущий день"
         >‹</button>
 
-        <h1 className="text-lg font-medium tracking-tight">
+        <h1 className="text-lg font-medium tracking-tight flex items-center gap-2">
           {headerLabel(viewedDate)}
+          {/* Refresh: pulls Week Plan / Habbits / Польза from the sheet. */}
+          <button
+            onClick={refreshConfig}
+            disabled={configLoading}
+            className={`w-7 h-7 flex items-center justify-center rounded-full text-slate-500 active:bg-slate-800 ${configLoading ? "animate-spin text-slate-600" : ""}`}
+            aria-label="Обновить план из таблицы"
+            title={configError ? `Ошибка: ${configError}` : "Обновить план из таблицы"}
+          >
+            <span className="text-base leading-none">⟳</span>
+          </button>
         </h1>
 
         <button

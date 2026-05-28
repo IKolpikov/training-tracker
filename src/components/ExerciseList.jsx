@@ -1,9 +1,10 @@
 import { useDay } from "../DayContext.jsx";
-import { schedule } from "../data/schedule.js";
+import { useConfig } from "../useConfig.js";
 import ExerciseCard from "./ExerciseCard.jsx";
 
 export default function ExerciseList() {
   const { day, loading } = useDay();
+  const { schedule } = useConfig();
   const plan = schedule[day];
 
   if (loading && (!plan || (plan.strength.length + plan.cardio.length) === 0)) {

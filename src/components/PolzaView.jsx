@@ -1,5 +1,6 @@
 import { useDay } from "../DayContext.jsx";
-import { polza, isPolzaLog, polzaIdFromLog } from "../data/polza.js";
+import { useConfig } from "../useConfig.js";
+import { isPolzaLog, polzaIdFromLog } from "../data/polza.js";
 import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
 
 // Польза per viewed day:
@@ -8,6 +9,7 @@ import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
 //  Items done on OTHER days don't show on today's view (they're archived).
 export default function PolzaView() {
   const { dateStr, dayLogs, polzaDoneIds, logPolza } = useDay();
+  const { polza } = useConfig();
 
   // ids done on the viewed day (via Log entries)
   const doneViewedIds = new Set(

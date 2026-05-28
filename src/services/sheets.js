@@ -10,6 +10,18 @@ export async function fetchWeekLogs(weekIso) {
   return data.rows; // array of Log row objects
 }
 
+// Fetch a config tab from the sheet. Returns raw row array (callers re-shape).
+async function fetchConfigTab_(action) {
+  const res = await fetch(`${API_URL}?action=${action}`);
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || `fetch ${action} failed`);
+  return data.rows;
+}
+
+export const fetchPlanRows   = () => fetchConfigTab_("plan");
+export const fetchHabitsRows = () => fetchConfigTab_("habits");
+export const fetchPolzaRows  = () => fetchConfigTab_("polza");
+
 // entry: object keyed by Log headers (timestamp, date, week_iso, day, exercise_id, ...)
 export async function appendLog(entry) {
   const res = await fetch(API_URL, {

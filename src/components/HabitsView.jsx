@@ -1,10 +1,12 @@
 import { useDay } from "../DayContext.jsx";
-import { habits, habitsByDay, habitLogId } from "../data/habits.js";
+import { useConfig } from "../useConfig.js";
+import { habitLogId } from "../data/habits.js";
 
 // Habits for the viewed day. Tap a row → log; tap again → remove last log.
 // Done = at least one habit_<id> entry exists in dayLogs for today.
 export default function HabitsView() {
   const { day, dayLogs, logHabit, removeHabit } = useDay();
+  const { habits, habitsByDay } = useConfig();
   const ids = habitsByDay[day] || [];
 
   return (
@@ -19,6 +21,7 @@ export default function HabitsView() {
 
       {ids.map(id => {
         const h     = habits[id];
+        if (!h) return null;
         const logId = habitLogId(id);
         const done  = dayLogs.some(r => r.exercise_id === logId);
         return (
