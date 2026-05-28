@@ -189,10 +189,11 @@ export default function App() {
 
   // ── logging helpers ───────────────────────────────────────────────────────
   // Assembles a full Log-row. date/week_iso/day reflect the VIEWED date.
-  // timestamp column A = real clock time (CLAUDE.md invariant).
-  function buildEntry(ex, fields, setNumber) {
+  // timestamp column A = real clock time (CLAUDE.md invariant); pass an explicit
+  // one for batch writes so each row gets a unique key.
+  function buildEntry(ex, fields, setNumber, timestamp) {
     return {
-      timestamp:     realTimestamp(),
+      timestamp:     timestamp || realTimestamp(),
       date:          dateStr,
       week_iso:      weekIso,
       day,
@@ -225,12 +226,14 @@ export default function App() {
   };
 
   // Card tap: save all remaining sets from MultiSetModal.
+  // Each row gets a distinct ms-offset timestamp so deletes target one set only.
   const saveMultipleSets = (entriesFields) => {
     const ex          = exerciseById[multiSetExId];
     const currentDone = dayLogs.filter(r => r.exercise_id === multiSetExId).length;
+    const base        = Date.now();
 
     const newLogs = entriesFields.map((fields, i) =>
-      buildEntry(ex, fields, currentDone + i + 1)
+      buildEntry(ex, fields, currentDone + i + 1, new Date(base + i).toISOString().slice(0, 23))
     );
 
     for (const entry of newLogs) logSetOptimistic(entry);

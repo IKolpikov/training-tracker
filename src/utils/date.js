@@ -32,9 +32,10 @@ export function getWeekNumber(date = logicalNow()) {
   return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 }
 
-// For Log column A: REAL timestamp. Columns B/C/D use the logical helpers above.
+// For Log column A: REAL timestamp, millisecond precision so each set row is unique
+// (used as the delete/dedup key). "YYYY-MM-DDTHH:mm:ss.SSS".
 export function realTimestamp(now = new Date()) {
-  return now.toISOString().slice(0, 19);
+  return now.toISOString().slice(0, 23);
 }
 
 // Human header label, e.g. "Пн, 25 мая"

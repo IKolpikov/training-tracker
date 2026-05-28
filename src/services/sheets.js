@@ -41,3 +41,15 @@ export async function appendLog(entry) {
   if (!data.ok) throw new Error(data.error || "append failed");
   return true;
 }
+
+// Delete all Log rows with the given timestamp (unique per entry).
+export async function deleteLog(timestamp) {
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ action: "delete", timestamp })
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "delete failed");
+  return true;
+}

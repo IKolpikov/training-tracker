@@ -145,8 +145,8 @@ function normalizeCell_(header, value) {
   if (value === "" || value === null || value === undefined) return "";
   if (value instanceof Date) {
     if (header === "date") return Utilities.formatDate(value, "UTC", "yyyy-MM-dd");
-    if (header === "timestamp") return Utilities.formatDate(value, "UTC", "yyyy-MM-dd'T'HH:mm:ss");
-    return Utilities.formatDate(value, "UTC", "yyyy-MM-dd'T'HH:mm:ss");
+    if (header === "timestamp") return Utilities.formatDate(value, "UTC", "yyyy-MM-dd'T'HH:mm:ss.SSS");
+    return Utilities.formatDate(value, "UTC", "yyyy-MM-dd'T'HH:mm:ss.SSS");
   }
   if (header === "week_iso" && value !== "") {
     const n = Number(value);
@@ -293,15 +293,44 @@ function getPolza_() {
   return json_({ ok: true, rows: out });
 }
 
-// POST body = single Log entry (object keyed by HEADERS). Appends one row.
+// POST body:
+//   - { action: "delete", timestamp } → remove all Log rows with that timestamp
+//   - otherwise a single Log entry (object keyed by HEADERS) → append one row
 function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
-    const sh   = getLogSheet_();
-    const row  = HEADERS.map(h => (body[h] !== undefined && body[h] !== null) ? body[h] : "");
+    if (body && body.action === "delete") return deleteLogRows_(body.timestamp);
+
+    const sh  = getLogSheet_();
+    const row = HEADERS.map(h => (body[h] !== undefined && body[h] !== null) ? body[h] : "");
     sh.appendRow(row);
     return json_({ ok: true });
   } catch (err) {
     return json_({ ok: false, error: String(err) });
   }
+}
+
+// Delete every Log row whose timestamp (column A) matches. Timestamps are unique
+// per set (ms precision), so this removes exactly the intended entry.
+function deleteLogRows_(timestamp) {
+  const target = String(timestamp || "").trim();
+  if (!target) return json_({ ok: false, error: "delete: missing timestamp" });
+
+  const sh = getLogSheet_();
+  const values = sh.getDataRange().getValues();
+  const tsCol = HEADERS.indexOf("timestamp"); // column 0
+  let deleted = 0;
+
+  // Iterate bottom-up so row indices stay valid as we delete. Row 0 = headers.
+  for (let r = values.length - 1; r >= 1; r--) {
+    const cell = values[r][tsCol];
+    const cellStr = (cell instanceof Date)
+      ? Utilities.formatDate(cell, "UTC", "yyyy-MM-dd'T'HH:mm:ss.SSS")
+      : String(cell).trim();
+    if (cellStr === target) {
+      sh.deleteRow(r + 1); // sheet rows are 1-indexed
+      deleted++;
+    }
+  }
+  return json_({ ok: true, deleted: deleted });
 }

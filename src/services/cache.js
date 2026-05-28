@@ -3,6 +3,7 @@
 const K = {
   logsWeek: (w) => `logs_week_${w}`,
   queue: "write_queue",
+  deleteQueue: "delete_queue",
 };
 
 export function getCachedWeekLogs(weekIso) {
@@ -23,4 +24,18 @@ export function pushQueue(entry) {
 }
 export function setQueue(q) {
   localStorage.setItem(K.queue, JSON.stringify(q));
+}
+
+// Delete queue: timestamps of already-synced rows pending server-side deletion.
+export function getDeleteQueue() {
+  try { return JSON.parse(localStorage.getItem(K.deleteQueue)) || []; }
+  catch { return []; }
+}
+export function pushDeleteQueue(timestamp) {
+  const q = getDeleteQueue();
+  if (!q.includes(timestamp)) q.push(timestamp);
+  localStorage.setItem(K.deleteQueue, JSON.stringify(q));
+}
+export function setDeleteQueue(q) {
+  localStorage.setItem(K.deleteQueue, JSON.stringify(q));
 }
