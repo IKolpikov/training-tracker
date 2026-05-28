@@ -1,19 +1,24 @@
 /**
  * Training Tracker backend — Google Apps Script Web App.
- * Deploy: Extensions > Apps Script (from the target Sheet) OR standalone with SHEET_ID below.
- * Deploy as: Web app, Execute as = Me, Who has access = Anyone.
- * Copy the /exec URL into the frontend .env (VITE_API_URL).
+ *
+ * Deploy: Apps Script editor → Deploy → New deployment (or Manage deployments → Edit
+ *   → New version). Web app, Execute as = Me, Who has access = Anyone. URL stays stable
+ *   between deployments when you "Edit" rather than create a new one.
  *
  * CORS note: browser fetch must send Content-Type text/plain to skip preflight
  * (Apps Script web apps don't answer OPTIONS). Body is still JSON, parsed server-side.
  *
- * Two sheet IDs:
+ * Sheet IDs: keep both pointing at the same file unless you split logs and plan.
  *   SHEET_ID         — Log tab (read history + append new entries).
  *   CONFIG_SHEET_ID  — Plan/Habits/Польза tabs (read-only).
- * Set them to the same value if you keep everything in one file.
+ *
+ * ID derivation (no `id` column required in the sheet):
+ *   - If row has an `id` cell with content → use it (stable across renames).
+ *   - Else look up the name in CANONICAL_*_IDS for a fixed mapping.
+ *   - Else slugify the Russian name → latin (e.g. "Скрип кровати" → "skrip_krovati").
+ *   Adding an `id` column lets you rename items without breaking Log history.
  */
 
-// Single-file setup: Log + plan/habits/polza all live in the same spreadsheet.
 const SHEET_ID        = "1t_YwNTPT64YV-5lfMH5lIN-eypeiNIaZKB13IRcCDYk";
 const CONFIG_SHEET_ID = "1t_YwNTPT64YV-5lfMH5lIN-eypeiNIaZKB13IRcCDYk";
 
@@ -26,6 +31,79 @@ const HEADERS  = [
   "timestamp","date","week_iso","day","exercise_id","exercise_name",
   "set_number","reps","load","unit","notes","distance_km","duration_min","quality_min"
 ];
+
+// ── Canonical name → id maps ────────────────────────────────────────────────
+// Match the ids the app's hardcoded defaults use, so existing Log history
+// (writted with these ids) stays linked when the sheet becomes source of truth.
+
+const CANONICAL_PLAN_IDS = {
+  "RDL classic":              "rdl_classic",
+  "RDL single leg":           "rdl_single_leg",
+  "ISO hamstring":            "iso_hamstring",
+  "Gliders":                  "gliders",
+  "Calf raises":              "calf_raises",
+  "Gluteus medius with load": "gluteus_medius",
+  "Gluteus medius":           "gluteus_medius",
+  "Copenhagen dynamic":       "copenhagen",
+  "Copenhagen plank":         "copenhagen",
+  "Bulgarian squat":          "bulgarian",
+  "Bench press":              "bench",
+  "Z2 run":                   "z2_run",
+  "Basketball":               "basketball",
+  "Tempo run":                "tempo",
+  "Z2 long cycling":          "z2_cycle",
+  "Z2 cycle":                 "z2_cycle",
+  "Intervals":                "intervals",
+  "Z2 long run":              "long_z2",
+  "Long Z2 run":              "long_z2",
+};
+
+const CANONICAL_HABIT_IDS = {
+  "Кетанозол":  "ketanozol",
+  "Ретинол":    "retinol",
+  "Лак":        "lak",
+  "Ликоид":     "likoid",
+  "Мазь палец": "maz_palec",
+  "Пилинг":     "piling",
+};
+
+const CANONICAL_POLZA_IDS = {
+  "Убраться на балконе":           "balkon",
+  "Обновить ловушки от тараканов": "tarakany",
+  "Скрип кровати":                 "krovat_skrip",
+};
+
+// Russian → Latin transliteration for slug fallback.
+const TRANSLIT_MAP = {
+  "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"yo","ж":"zh","з":"z",
+  "и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r",
+  "с":"s","т":"t","у":"u","ф":"f","х":"kh","ц":"ts","ч":"ch","ш":"sh","щ":"shch",
+  "ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya"
+};
+
+function slugify_(name) {
+  const lower = String(name || "").toLowerCase();
+  let out = "";
+  for (let i = 0; i < lower.length; i++) {
+    const ch = lower[i];
+    out += (TRANSLIT_MAP[ch] !== undefined) ? TRANSLIT_MAP[ch] : ch;
+  }
+  return out
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    || "unnamed";
+}
+
+// Returns the id for a row: explicit id col > canonical map > slug fallback.
+function resolveId_(explicitId, name, canonicalMap) {
+  const eid = s_(explicitId);
+  if (eid) return eid;
+  const mapped = canonicalMap[s_(name)];
+  if (mapped) return mapped;
+  return slugify_(name);
+}
+
+// ── Sheet access helpers ────────────────────────────────────────────────────
 
 function getLogSheet_() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
@@ -49,58 +127,57 @@ function json_(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-/**
- * Normalize a Log-tab cell value. Sheets auto-parses dates back to Date objects;
- * we convert them back to the string format the frontend expects.
- */
+// Normalize a Log-tab cell. Sheets auto-parses dates → Date objects; we re-stringify.
 function normalizeCell_(header, value) {
   if (value === "" || value === null || value === undefined) return "";
-
   if (value instanceof Date) {
-    if (header === "date") {
-      return Utilities.formatDate(value, "UTC", "yyyy-MM-dd");
-    }
-    if (header === "timestamp") {
-      return Utilities.formatDate(value, "UTC", "yyyy-MM-dd'T'HH:mm:ss");
-    }
+    if (header === "date") return Utilities.formatDate(value, "UTC", "yyyy-MM-dd");
+    if (header === "timestamp") return Utilities.formatDate(value, "UTC", "yyyy-MM-dd'T'HH:mm:ss");
     return Utilities.formatDate(value, "UTC", "yyyy-MM-dd'T'HH:mm:ss");
   }
-
   if (header === "week_iso" && value !== "") {
     const n = Number(value);
     return isNaN(n) ? value : n;
   }
-
   return value;
 }
 
-/**
- * Generic header-keyed reader: trims headers, returns array of row objects.
- * Looks up cells by header NAME so the user can reorder columns freely.
- */
+// Generic header-keyed reader: trims headers, returns array of row objects.
+// Cells looked up by header NAME so user can reorder columns freely.
 function readTabRows_(tabName) {
   const sh = getConfigSheet_(tabName);
   const values = sh.getDataRange().getValues();
-  if (values.length === 0) return [];
+  if (values.length === 0) return { headers: [], rows: [] };
 
   const headers = values.shift().map(h => String(h || "").trim());
-  return values.map(row => {
+  const rows = values.map(row => {
     const o = {};
     headers.forEach((h, i) => { o[h] = row[i]; });
     return o;
-  }).filter(o => {
-    // Skip empty rows (all cells blank).
-    return Object.values(o).some(v => v !== "" && v !== null && v !== undefined);
-  });
+  }).filter(o => Object.values(o).some(v => v !== "" && v !== null && v !== undefined));
+
+  return { headers, rows };
 }
 
-// Strip trailing whitespace, return "" for null/undefined.
 function s_(v) { return String(v == null ? "" : v).trim(); }
-// Coerce to number; "" / non-numeric -> null.
 function n_(v) {
   if (v === "" || v === null || v === undefined) return null;
   const n = Number(v);
   return isNaN(n) ? null : n;
+}
+
+// Find a "name-like" column when headers vary. Tries common names, then any non-meta column.
+function findFirstHeader_(headers, candidates, exclude) {
+  for (const c of candidates) {
+    const i = headers.indexOf(c);
+    if (i !== -1) return headers[i];
+  }
+  // Fallback: first header not in exclude set.
+  const exSet = new Set((exclude || []).map(s => s.toLowerCase()));
+  for (const h of headers) {
+    if (h && !exSet.has(h.toLowerCase())) return h;
+  }
+  return null;
 }
 
 // ── GET dispatch ────────────────────────────────────────────────────────────
@@ -134,46 +211,60 @@ function getLogs_(e) {
   return json_({ ok: true, rows: rows });
 }
 
-// Week Plan: columns id | Day | Type | Name | Sets | Reps | Unit | Load | Load unit | Notes
-//   Type: "STR routine" | "Cardio". ISO is inferred from Unit="seconds".
+// Week Plan: expected headers Day | Type | Name | Sets | Reps | Unit | Load | Load unit | Notes
+//   `id` column optional. ISO type inferred from Unit="seconds".
 function getPlan_() {
-  const rows = readTabRows_(PLAN_TAB);
-  const out = rows.map(r => ({
-    id:        s_(r["id"]),
-    day:       s_(r["Day"]),
-    type:      s_(r["Type"]),
-    name:      s_(r["Name"]),
-    sets:      n_(r["Sets"]),
-    reps:      n_(r["Reps"]),
-    unit:      s_(r["Unit"]),
-    load:      n_(r["Load"]),
-    load_unit: s_(r["Load unit"]),
-    notes:     s_(r["Notes"]),
-  })).filter(r => r.id && r.day);
+  const { rows } = readTabRows_(PLAN_TAB);
+  const out = rows.map(r => {
+    const name = s_(r["Name"]);
+    return {
+      id:        resolveId_(r["id"], name, CANONICAL_PLAN_IDS),
+      day:       s_(r["Day"]),
+      type:      s_(r["Type"]),
+      name:      name,
+      sets:      n_(r["Sets"]),
+      reps:      n_(r["Reps"]),
+      unit:      s_(r["Unit"]),
+      load:      n_(r["Load"]),
+      load_unit: s_(r["Load unit"]),
+      notes:     s_(r["Notes"]),
+    };
+  }).filter(r => r.day && r.name);
   return json_({ ok: true, rows: out });
 }
 
-// Habbits: columns id | День | Рутина
+// Habbits: expected headers День | Рутина  (id optional)
 function getHabits_() {
-  const rows = readTabRows_(HABITS_TAB);
-  const out = rows.map(r => ({
-    id:   s_(r["id"]),
-    day:  s_(r["День"]),
-    name: s_(r["Рутина"]),
-  })).filter(r => r.id && r.day);
+  const { rows } = readTabRows_(HABITS_TAB);
+  const out = rows.map(r => {
+    const name = s_(r["Рутина"]);
+    return {
+      id:   resolveId_(r["id"], name, CANONICAL_HABIT_IDS),
+      day:  s_(r["День"]),
+      name: name,
+    };
+  }).filter(r => r.day && r.name);
   return json_({ ok: true, rows: out });
 }
 
-// Польза: columns id | name (or any 2 columns, second one is treated as name)
+// Польза: header layout is flexible. Picks first non-id column as name.
 function getPolza_() {
-  const rows = readTabRows_(POLZA_TAB);
-  // Find the "name"-like column: anything not "id".
-  const sample = rows[0] || {};
-  const nameKey = Object.keys(sample).find(k => k.toLowerCase() !== "id") || "name";
-  const out = rows.map(r => ({
-    id:   s_(r["id"]),
-    name: s_(r[nameKey]),
-  })).filter(r => r.id && r.name);
+  const { headers, rows } = readTabRows_(POLZA_TAB);
+  const nameKey = findFirstHeader_(headers, ["name", "Name", "Польза", "Задача", "Дело"], ["id"]);
+  // If no header at all (or single unnamed column), iterate raw cells of first column.
+  if (!nameKey) {
+    // Re-read raw so we can grab unnamed cells.
+    const sh = getConfigSheet_(POLZA_TAB);
+    const vals = sh.getDataRange().getValues();
+    const out = vals.map(row => s_(row[0]))
+      .filter(name => name)
+      .map(name => ({ id: resolveId_("", name, CANONICAL_POLZA_IDS), name }));
+    return json_({ ok: true, rows: out });
+  }
+  const out = rows.map(r => {
+    const name = s_(r[nameKey]);
+    return { id: resolveId_(r["id"], name, CANONICAL_POLZA_IDS), name };
+  }).filter(r => r.name);
   return json_({ ok: true, rows: out });
 }
 
