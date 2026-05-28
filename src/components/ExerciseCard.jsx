@@ -1,5 +1,6 @@
 import { useDay } from "../DayContext.jsx";
 import { useConfig } from "../useConfig.js";
+import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
 import {
   cardState,
   cardioTargetToday,
@@ -27,6 +28,18 @@ export default function ExerciseCard({ exId, kind }) {
   const state   = cardState(done, target);
   const isDone  = done >= target;
 
+  // Past-day incomplete: missed reps moved into carry to the next scheduled day.
+  // Surface this in the counter color (rose) so the history is glanceable.
+  // The card stays fully editable (tap to open modal, [+] to add, invisible [−] to remove).
+  const todayStr = toDateStr(logicalNow());
+  const isPastIncomplete = dateStr < todayStr && done < target;
+
+  const counterClass = isPastIncomplete
+    ? "text-rose-400"
+    : isDone
+      ? "text-emerald-400"
+      : "text-slate-300";
+
   return (
     <div
       className={`relative flex items-center gap-3 rounded-xl border bg-slate-900 px-3 py-3 cursor-pointer active:bg-slate-800 transition-opacity ${STATE_STYLES[state]}`}
@@ -47,7 +60,7 @@ export default function ExerciseCard({ exId, kind }) {
       </div>
 
       {/* Counter */}
-      <div className={`tabular-nums text-sm font-mono shrink-0 ${isDone ? "text-emerald-400" : "text-slate-300"}`}>
+      <div className={`tabular-nums text-sm font-mono shrink-0 ${counterClass}`}>
         [{done}/{target}]
       </div>
 
