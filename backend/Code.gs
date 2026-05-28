@@ -303,7 +303,14 @@ function doPost(e) {
 
     const sh  = getLogSheet_();
     const row = HEADERS.map(h => (body[h] !== undefined && body[h] !== null) ? body[h] : "");
-    sh.appendRow(row);
+    const r   = sh.getLastRow() + 1;
+    // Force timestamp (col 1) and date (col 2) to PLAIN TEXT before writing, so the
+    // ISO strings round-trip byte-for-byte. Otherwise Sheets coerces them to Date
+    // objects in the sheet timezone and they read back shifted (breaks dedup,
+    // delete-by-timestamp, and day filtering).
+    sh.getRange(r, 1).setNumberFormat("@");
+    sh.getRange(r, 2).setNumberFormat("@");
+    sh.getRange(r, 1, 1, row.length).setValues([row]);
     return json_({ ok: true });
   } catch (err) {
     return json_({ ok: false, error: String(err) });
