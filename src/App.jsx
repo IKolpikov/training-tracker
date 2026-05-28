@@ -144,7 +144,7 @@ export default function App() {
 
   const flashSyncOk = useCallback(() => {
     setSyncOk(true);
-    setTimeout(() => setSyncOk(false), 1000);
+    setTimeout(() => setSyncOk(false), 1200);
   }, []);
 
   // Drive the offline queue to the backend and confirm the exchange.

@@ -29,11 +29,12 @@ export default function DayHeader() {
           >
             <span className="text-base leading-none">⟳</span>
           </button>
-          {/* Green check: flashes 1s when a real backend exchange is confirmed
-              (write landed on server, or config came back non-empty). */}
+          {/* Green check: shows ~1.2s when a real backend exchange is confirmed
+              (write landed on server, or config came back non-empty). Solid +
+              bold so it's not missed. */}
           {syncOk && (
             <span
-              className="text-emerald-400 text-base leading-none animate-pulse"
+              className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500 text-slate-950 text-sm font-bold leading-none"
               aria-label="Синхронизировано с сервером"
               title="Данные ушли на сервер"
             >✓</span>
