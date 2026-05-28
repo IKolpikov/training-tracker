@@ -17,6 +17,7 @@
 
 import { WEEK } from "../data/schedule.js";          // WEEK is a static constant
 import { getConfig } from "../data/configStore.js"; // dynamic — pulls latest config each call
+import { getRussianDay, logicalNow } from "./date.js";
 
 function scheduledDays(exId) {
   const { schedule } = getConfig();
@@ -26,12 +27,18 @@ function scheduledDays(exId) {
 // weekLogs: array of Log rows for the CURRENT week_iso (already filtered).
 // Returns today's target set count for a strength exercise with deficit/surplus carry baked in.
 //
-// Walk all PRIOR scheduled days of this exercise chronologically (by WEEK order).
-// Maintain a signed `carry`:
+// Walk PRIOR scheduled days of this exercise chronologically (by WEEK order).
+// CRITICAL: only days STRICTLY BEFORE the actual current weekday count toward carry.
+// Per user rule: "недовыполненное значение переезжает [только] до 4 утра [следующего дня]" —
+// the carry rule fires only after a day rolls over the 04:00 boundary. While today is
+// in progress, its (in)completeness must not inflate future targets; same for unviewed
+// future days.
+//
 //   carry_out = base + carry_in - donePrior   (unclamped — preserves surplus excess)
-// Today's displayed target = max(0, base_today + carry_in_today).
-// Today's own logs do NOT change today's target; logging on a past day retroactively
-// recomputes downstream day targets (which is the desired behavior).
+//   target_today = max(0, base_today + carry_in_today)
+//
+// Today's own logs do NOT change today's target; logging on a closed past day retroactively
+// recomputes downstream targets.
 export function strengthTargetToday(exId, day, weekLogs) {
   const { exerciseById, schedule } = getConfig();
   const ex = exerciseById[exId];
@@ -44,9 +51,14 @@ export function strengthTargetToday(exId, day, weekLogs) {
   const todayPos = sched.indexOf(day);
   if (todayPos <= 0) return base;  // first scheduled day → no prior carry, target = base
 
+  // "Closed" days = strictly before the actual current weekday.
+  // Future days and the current-in-progress day are excluded from carry.
+  const actualTodayIdx = WEEK.indexOf(getRussianDay(logicalNow()));
+
   let carry = 0;
   for (let i = 0; i < todayPos; i++) {
-    const priorDay  = sched[i];
+    const priorDay = sched[i];
+    if (WEEK.indexOf(priorDay) >= actualTodayIdx) break; // not closed yet → stop
     const priorDone = weekLogs.filter(
       r => r.exercise_id === exId && r.day === priorDay
     ).length;
