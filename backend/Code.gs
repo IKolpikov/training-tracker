@@ -111,6 +111,19 @@ function getLogSheet_() {
   if (!sh) {
     sh = ss.insertSheet(LOG_TAB);
     sh.appendRow(HEADERS);
+    return sh;
+  }
+  // Self-heal: ensure a proper header row exists. A manually-created empty tab,
+  // or one whose first row isn't the headers, would make getLogs_ misread data
+  // (it treats row 1 as the header). Insert headers at the top when missing.
+  if (sh.getLastRow() === 0) {
+    sh.appendRow(HEADERS);
+  } else {
+    const firstCell = String(sh.getRange(1, 1).getValue()).trim();
+    if (firstCell !== "timestamp") {
+      sh.insertRowBefore(1);
+      sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    }
   }
   return sh;
 }
