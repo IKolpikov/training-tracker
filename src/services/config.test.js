@@ -20,6 +20,15 @@ describe("buildPlanConfig", () => {
     expect(exerciseById.iso.unit).toBe("sec");
   });
 
+  it("STR weight unit comes from 'Load unit' (kg), not the reps Unit", () => {
+    // rdl_classic row: unit=reps, load_unit not set in test rows → defaults kg
+    expect(exerciseById.rdl_classic.unit).toBe("kg");
+    const withLoadUnit = buildPlanConfig([
+      { id: "x", day: "Пн", type: "STR routine", name: "X", sets: 2, reps: 8, unit: "reps", load: 50, load_unit: "kg" },
+    ]);
+    expect(withLoadUnit.exerciseById.x.unit).toBe("kg");
+  });
+
   it("infers CARDIO from Type=Cardio and keeps setsPerSession", () => {
     expect(exerciseById.tempo.type).toBe("CARDIO");
     expect(exerciseById.tempo.setsPerSession).toBe(2);

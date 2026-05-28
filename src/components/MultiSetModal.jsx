@@ -24,14 +24,16 @@ function blockDefault(ex) {
 
 function blockFields(ex) {
   if (ex.type === "STR") return [
-    { key: "load",  label: "Вес",      unit: ex.unit || "kg", inputMode: "decimal" },
-    { key: "reps",  label: "Повторы",  unit: "reps",          inputMode: "numeric" }
+    { key: "load",  label: "Вес",      unit: ex.unit || "kg", inputMode: "decimal", type: "number" },
+    { key: "reps",  label: "Повторы",  unit: "reps",          inputMode: "numeric", type: "number" }
   ];
   if (ex.type === "ISO") return [
-    { key: "load",  label: "Удержание", unit: "sec",           inputMode: "numeric" }
+    { key: "load",  label: "Удержание", unit: "sec",          inputMode: "numeric", type: "number" }
   ];
+  // CARDIO: text inputs so values like "8.12"/"8.20" are preserved EXACTLY
+  // (m.ss interval time — seconds must not be rounded or lose trailing zeros).
   return (ex.cardioFields || []).map(f => ({
-    key: f.key, label: f.label, unit: f.unit || "", inputMode: "decimal"
+    key: f.key, label: f.label, unit: f.unit || "", inputMode: "decimal", type: "text"
   }));
 }
 
@@ -49,8 +51,13 @@ function toEntryFields(ex, vals) {
   const n = (v) => (v !== "" && v !== null && v !== undefined && !isNaN(+v)) ? +v : "";
   if (ex.type === "STR") return { reps: n(vals.reps), load: n(vals.load), unit: ex.unit || "" };
   if (ex.type === "ISO") return { reps: 1, load: n(vals.load), unit: "sec" };
+  // CARDIO: keep the RAW string (no numeric coercion) so m.ss times like
+  // "8.20" / "8.05" are stored exactly, seconds intact.
   const out = {};
-  for (const f of ex.cardioFields || []) out[f.key] = n(vals[f.key]);
+  for (const f of ex.cardioFields || []) {
+    const v = vals[f.key];
+    out[f.key] = (v === null || v === undefined) ? "" : String(v).trim();
+  }
   return out;
 }
 
@@ -164,7 +171,7 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
                         {f.label}{f.unit ? ` (${f.unit})` : ""}
                       </span>
                       <input
-                        type="number"
+                        type={f.type || "number"}
                         inputMode={f.inputMode}
                         step="any"
                         value={sets[i]?.[f.key] ?? ""}

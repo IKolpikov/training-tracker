@@ -304,12 +304,12 @@ function doPost(e) {
     const sh  = getLogSheet_();
     const row = HEADERS.map(h => (body[h] !== undefined && body[h] !== null) ? body[h] : "");
     const r   = sh.getLastRow() + 1;
-    // Force timestamp (col 1) and date (col 2) to PLAIN TEXT before writing, so the
-    // ISO strings round-trip byte-for-byte. Otherwise Sheets coerces them to Date
-    // objects in the sheet timezone and they read back shifted (breaks dedup,
-    // delete-by-timestamp, and day filtering).
-    sh.getRange(r, 1).setNumberFormat("@");
-    sh.getRange(r, 2).setNumberFormat("@");
+    // Force certain columns to PLAIN TEXT before writing so values round-trip
+    // byte-for-byte (Sheets would otherwise coerce them):
+    //   1 timestamp, 2 date  → no timezone shift
+    //   12 distance_km, 13 duration_min, 14 quality_min → m.ss interval times keep
+    //      exact seconds (e.g. "8.20" stays "8.20", not collapsed to 8.2)
+    [1, 2, 12, 13, 14].forEach(c => sh.getRange(r, c).setNumberFormat("@"));
     sh.getRange(r, 1, 1, row.length).setValues([row]);
     return json_({ ok: true });
   } catch (err) {

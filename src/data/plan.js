@@ -35,8 +35,8 @@ export const exercises = [
     ] },
   { id: "intervals", name: "Intervals",  type: "CARDIO", setsPerSession: 6, description: "6×[800m + 1min rest]. HR 175+. Each 800m repeat = 1 set.",
     cardioFields: [
-      { key: "distance_km", label: "Дистанция повтора", unit: "km",  default: 0.8 },
-      { key: "quality_min", label: "Время повтора",      unit: "min", default: null }
+      { key: "distance_km", label: "Дистанция повтора", unit: "km",      default: 0.8 },
+      { key: "quality_min", label: "Время повтора",      unit: "мин.сек", default: null } // формат m.ss, напр. 8.12 = 8 мин 12 сек
     ] },
   { id: "basketball", name: "Basketball", type: "CARDIO", setsPerSession: 1, description: "Solo shooting + dribbling. Easy cardio.",
     cardioFields: [
