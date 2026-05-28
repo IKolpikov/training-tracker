@@ -41,7 +41,8 @@ export default function App() {
   const { exerciseById, schedule, habits, polzaById } = useConfig();
   const [configLoading, setConfigLoading] = useState(false);
   const [configError,   setConfigError]   = useState(null);
-  const [syncOk,        setSyncOk]        = useState(false); // green ✓ flash on real backend exchange
+  // Persistent backend-connection status: null (never) | {ok:true} | {ok:false, error}
+  const [lastSync,      setLastSync]      = useState(null);
 
   const [viewedDate, setViewedDate] = useState(() => logicalNow());
 
@@ -142,33 +143,34 @@ export default function App() {
     } catch { /* offline / failure → keep current optimistic state */ }
   }, []);
 
-  const flashSyncOk = useCallback(() => {
-    setSyncOk(true);
-    setTimeout(() => setSyncOk(false), 1200);
-  }, []);
-
-  // Drive the offline queue to the backend and confirm the exchange.
-  // Flashes the green ✓ ONLY when a real write/delete landed on the server
-  // (POST returned ok). Offline / failed → no flash, entry stays queued.
+  // Drive the offline queue to the backend and record the real result.
+  // lastSync turns green ONLY when a write/delete actually landed on the server.
   const commitSync = useCallback(async () => {
     try {
       const res = await drainQueue();
-      if (res.ok && (res.appended + res.deleted) > 0) flashSyncOk();
-    } catch { /* stays queued, retries on next action/focus */ }
-  }, [flashSyncOk]);
+      if ((res.appended + res.deleted) > 0) {
+        setLastSync(res.ok ? { ok: true } : { ok: false, error: "запись не ушла на сервер" });
+      } else if (res.failed > 0) {
+        setLastSync({ ok: false, error: "сервер недоступен" });
+      }
+    } catch (e) {
+      setLastSync({ ok: false, error: String(e.message || e) });
+    }
+  }, []);
 
-  // The ⟳ button: refresh plan-config + Польза done-state, AND flush pending
-  // writes. Flash ✓ if the backend answered with real plan data OR a queued
-  // write actually landed — either proves a genuine round-trip to the server.
+  // The ⟳ button: refresh plan-config + Польза done-state + flush pending writes.
+  // Green when the backend answered with real plan data OR a queued write landed.
+  // Red when the server didn't respond with usable data.
   const refreshAll = useCallback(async () => {
     const fresh = await refreshConfig();
     refreshPolzaLog();
-    let wrote = { appended: 0, deleted: 0, ok: true };
-    try { wrote = await drainQueue(); } catch { /* ignore */ }
-    const gotRealData     = !!fresh && Array.isArray(fresh.exercises) && fresh.exercises.length > 0;
-    const wroteSomething  = wrote.ok && (wrote.appended + wrote.deleted) > 0;
-    if (gotRealData || wroteSomething) flashSyncOk();
-  }, [refreshConfig, refreshPolzaLog, flashSyncOk]);
+    let wrote = { appended: 0, deleted: 0, failed: 0, ok: true };
+    try { wrote = await drainQueue(); } catch { wrote.ok = false; }
+    const gotRealData    = !!fresh && Array.isArray(fresh.exercises) && fresh.exercises.length > 0;
+    const wroteSomething = wrote.ok && (wrote.appended + wrote.deleted) > 0;
+    if (gotRealData || wroteSomething) setLastSync({ ok: true });
+    else setLastSync({ ok: false, error: "сервер не ответил данными" });
+  }, [refreshConfig, refreshPolzaLog]);
 
   useEffect(() => {
     const cached = getCachedConfig();
@@ -346,7 +348,7 @@ export default function App() {
     logHabit, removeHabit,
     polzaLog, logPolza,
     // Config refresh (pull plan/habits/polza from sheet) + Польза done-state
-    refreshConfig: refreshAll, configLoading, configError, syncOk,
+    refreshConfig: refreshAll, configLoading, configError, lastSync,
   };
 
   // Bottom padding: Sport view has fixed ProgressBar (h~88) + TabBar (h-14) above it.

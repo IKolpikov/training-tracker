@@ -34,8 +34,8 @@ function inferType(sheetType, unit) {
   return "STR";
 }
 
-// Build exerciseById + schedule from Week Plan rows.
-function buildPlanConfig(planRows) {
+// Build exerciseById + schedule from Week Plan rows. (exported for tests)
+export function buildPlanConfig(planRows) {
   const exById = {};
   const schedule = {
     "Пн": { ...DEFAULTS.scheduleMeta["Пн"], strength: [], cardio: [] },
@@ -95,7 +95,7 @@ function buildPlanConfig(planRows) {
   return { exerciseById: exById, exercises, schedule };
 }
 
-function buildHabitsConfig(habitsRows) {
+export function buildHabitsConfig(habitsRows) {
   const habits = {};
   const habitsByDay = { "Пн":[], "Вт":[], "Ср":[], "Чт":[], "Пт":[], "Сб":[], "Вс":[] };
   for (const r of habitsRows) {
@@ -107,7 +107,7 @@ function buildHabitsConfig(habitsRows) {
   return { habits, habitsByDay };
 }
 
-function buildPolzaConfig(polzaRows) {
+export function buildPolzaConfig(polzaRows) {
   const polza = polzaRows.map(r => ({ id: r.id, name: r.name }));
   const polzaById = Object.fromEntries(polza.map(p => [p.id, p]));
   return { polza, polzaById };

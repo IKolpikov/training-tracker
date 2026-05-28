@@ -45,7 +45,7 @@ function scheduledDays(exId) {
 //
 // Today's own logs do NOT change today's target (it shows base + accumulated carry).
 // Logging on a CLOSED past day retroactively recomputes downstream targets.
-export function strengthTargetToday(exId, day, weekLogs) {
+export function strengthTargetToday(exId, day, weekLogs, todayDayName = getRussianDay(logicalNow())) {
   const { exerciseById, schedule } = getConfig();
   const ex = exerciseById[exId];
   if (!ex) return 0;
@@ -57,7 +57,7 @@ export function strengthTargetToday(exId, day, weekLogs) {
   const todayPos = sched.indexOf(day);
   if (todayPos <= 0) return base;  // first scheduled day → no prior carry, target = base
 
-  const actualTodayIdx = WEEK.indexOf(getRussianDay(logicalNow()));
+  const actualTodayIdx = WEEK.indexOf(todayDayName);
 
   let carry = 0;
   for (let i = 0; i < todayPos; i++) {

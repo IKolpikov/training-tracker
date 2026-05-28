@@ -4,8 +4,14 @@ import { headerLabel } from "../utils/date.js";
 export default function DayHeader() {
   const {
     viewedDate, goPrev, goNext, prevDisabled,
-    refreshConfig, configLoading, configError, syncOk,
+    refreshConfig, configLoading, configError, lastSync,
   } = useDay();
+
+  // Persistent connection status next to ⟳.
+  let dot = { cls: "bg-slate-600", label: "Ещё не синхронизировано" };
+  if (configLoading)              dot = { cls: "bg-amber-400 animate-pulse", label: "Синхронизация…" };
+  else if (lastSync?.ok)          dot = { cls: "bg-emerald-500", label: "Связь с сервером есть, данные синхронизированы" };
+  else if (lastSync && !lastSync.ok) dot = { cls: "bg-rose-500", label: `Ошибка связи: ${lastSync.error || "сервер не ответил"}` };
 
   return (
     <header className="sticky top-0 z-10 bg-slate-950/95 backdrop-blur border-b border-slate-800">
@@ -29,16 +35,13 @@ export default function DayHeader() {
           >
             <span className="text-base leading-none">⟳</span>
           </button>
-          {/* Green check: shows ~1.2s when a real backend exchange is confirmed
-              (write landed on server, or config came back non-empty). Solid +
-              bold so it's not missed. */}
-          {syncOk && (
-            <span
-              className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500 text-slate-950 text-sm font-bold leading-none"
-              aria-label="Синхронизировано с сервером"
-              title="Данные ушли на сервер"
-            >✓</span>
-          )}
+          {/* Persistent connection status dot. Always visible: grey=never,
+              amber=syncing, green=ok, red=error (hover for detail). */}
+          <span
+            className={`w-2.5 h-2.5 rounded-full ${dot.cls}`}
+            aria-label={dot.label}
+            title={dot.label}
+          />
         </h1>
 
         <button
