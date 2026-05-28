@@ -247,24 +247,36 @@ function getHabits_() {
   return json_({ ok: true, rows: out });
 }
 
-// Польза: header layout is flexible. Picks first non-id column as name.
+// Польза: tolerant of a missing header row. The tab is often just a bare list
+// of task names in column A (no header), so we must NOT blindly treat row 1 as
+// a header — that would drop the first task. We only skip row 1 if it clearly
+// looks like a header (contains a known header keyword).
 function getPolza_() {
-  const { headers, rows } = readTabRows_(POLZA_TAB);
-  const nameKey = findFirstHeader_(headers, ["name", "Name", "Польза", "Задача", "Дело"], ["id"]);
-  // If no header at all (or single unnamed column), iterate raw cells of first column.
-  if (!nameKey) {
-    // Re-read raw so we can grab unnamed cells.
-    const sh = getConfigSheet_(POLZA_TAB);
-    const vals = sh.getDataRange().getValues();
-    const out = vals.map(row => s_(row[0]))
-      .filter(name => name)
-      .map(name => ({ id: resolveId_("", name, CANONICAL_POLZA_IDS), name }));
-    return json_({ ok: true, rows: out });
+  const sh = getConfigSheet_(POLZA_TAB);
+  const vals = sh.getDataRange().getValues();
+  if (!vals.length) return json_({ ok: true, rows: [] });
+
+  const HEADER_WORDS = ["id", "name", "польза", "задача", "дело", "рутина", "день"];
+  const firstRow = vals[0].map(c => s_(c).toLowerCase());
+  const hasHeader = firstRow.some(c => HEADER_WORDS.indexOf(c) !== -1);
+
+  let idCol = -1, nameCol = 0, startRow = 0;
+  if (hasHeader) {
+    startRow = 1;
+    idCol = firstRow.indexOf("id");
+    // name column = first non-id non-empty header cell
+    for (let i = 0; i < firstRow.length; i++) {
+      if (i !== idCol && firstRow[i]) { nameCol = i; break; }
+    }
   }
-  const out = rows.map(r => {
-    const name = s_(r[nameKey]);
-    return { id: resolveId_(r["id"], name, CANONICAL_POLZA_IDS), name };
-  }).filter(r => r.name);
+
+  const out = [];
+  for (let r = startRow; r < vals.length; r++) {
+    const name = s_(vals[r][nameCol]);
+    if (!name) continue;
+    const explicitId = (idCol !== -1) ? vals[r][idCol] : "";
+    out.push({ id: resolveId_(explicitId, name, CANONICAL_POLZA_IDS), name });
+  }
   return json_({ ok: true, rows: out });
 }
 
