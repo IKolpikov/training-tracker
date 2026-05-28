@@ -9,42 +9,54 @@ import {
   getCachedWeekLogs, setCachedWeekLogs
 } from "./cache.js";
 
-// Called on Save: write to cache + queue right away (optimistic), fire-and-forget drain.
+// Called on Save: write to cache + queue right away (optimistic).
+// Does NOT auto-drain — the caller drives the drain (via commitSync) so it can
+// observe the real server result and confirm the exchange in the UI.
 export function logSetOptimistic(entry) {
   const week = entry.week_iso;
   const merged = [...getCachedWeekLogs(week), entry];
   setCachedWeekLogs(week, merged);
   pushQueue(entry);
-  drainQueue().catch(() => {}); // retry happens on next action/open
   return merged;
 }
 
-// Try to flush every queued write AND queued delete. Remove from queues on success.
+// Guard against concurrent drains (action + focus/online could race → double POST).
+let _draining = false;
+
+// Flush every queued write AND queued delete. Returns real outcome:
+//   { appended, deleted, failed, ok } — ok=true only if nothing failed.
+// A genuine server exchange happened iff (appended + deleted) > 0 && ok.
 export async function drainQueue() {
-  // Appends
-  const q = getQueue();
-  const remaining = [];
-  for (const entry of q) {
-    try { await appendLog(entry); }
-    catch { remaining.push(entry); }
-  }
-  setQueue(remaining);
+  if (_draining) return { appended: 0, deleted: 0, failed: 0, ok: true, skipped: true };
+  _draining = true;
+  try {
+    let appended = 0, deleted = 0, failed = 0;
 
-  // Deletes
-  const dq = getDeleteQueue();
-  const dRemaining = [];
-  for (const ts of dq) {
-    try { await deleteLog(ts); }
-    catch { dRemaining.push(ts); }
-  }
-  setDeleteQueue(dRemaining);
+    const q = getQueue();
+    const remaining = [];
+    for (const entry of q) {
+      try { await appendLog(entry); appended++; }
+      catch { remaining.push(entry); failed++; }
+    }
+    setQueue(remaining);
 
-  return remaining.length === 0 && dRemaining.length === 0;
+    const dq = getDeleteQueue();
+    const dRemaining = [];
+    for (const ts of dq) {
+      try { await deleteLog(ts); deleted++; }
+      catch { dRemaining.push(ts); failed++; }
+    }
+    setDeleteQueue(dRemaining);
+
+    return { appended, deleted, failed, ok: failed === 0 };
+  } finally {
+    _draining = false;
+  }
 }
 
 // Remove one entry everywhere: local cache + write queue, and the SERVER.
-// If the entry was still in the write queue (never synced), pulling it from the
-// queue is enough. If it had already been sent, we enqueue a server-side delete.
+// If still in the write queue (never synced), pulling it from the queue is enough.
+// If already sent, enqueue a server-side delete. Caller drives the drain.
 export function removeOptimistic(timestamp, weekIso) {
   const ts = String(timestamp);
   const q = getQueue();
@@ -53,10 +65,8 @@ export function removeOptimistic(timestamp, weekIso) {
   setQueue(q.filter(e => String(e.timestamp) !== ts));
   setCachedWeekLogs(weekIso, getCachedWeekLogs(weekIso).filter(r => String(r.timestamp) !== ts));
 
-  if (!wasUnsynced) {
-    pushDeleteQueue(ts);          // already on the server → must delete there too
-    drainQueue().catch(() => {}); // fire-and-forget; retries on next action/focus
-  }
+  if (!wasUnsynced) pushDeleteQueue(ts); // already on server → must delete there too
+  return { wasUnsynced };
 }
 
 // On open / week change: pull authoritative rows, merge unsynced queue on top (no dupes).

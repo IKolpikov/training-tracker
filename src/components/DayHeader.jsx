@@ -4,7 +4,7 @@ import { headerLabel } from "../utils/date.js";
 export default function DayHeader() {
   const {
     viewedDate, goPrev, goNext, prevDisabled,
-    refreshConfig, configLoading, configError,
+    refreshConfig, configLoading, configError, syncOk,
   } = useDay();
 
   return (
@@ -29,6 +29,15 @@ export default function DayHeader() {
           >
             <span className="text-base leading-none">⟳</span>
           </button>
+          {/* Green check: flashes 1s when a real backend exchange is confirmed
+              (write landed on server, or config came back non-empty). */}
+          {syncOk && (
+            <span
+              className="text-emerald-400 text-base leading-none animate-pulse"
+              aria-label="Синхронизировано с сервером"
+              title="Данные ушли на сервер"
+            >✓</span>
+          )}
         </h1>
 
         <button

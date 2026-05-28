@@ -41,6 +41,7 @@ export default function App() {
   const { exerciseById, schedule, habits, polzaById } = useConfig();
   const [configLoading, setConfigLoading] = useState(false);
   const [configError,   setConfigError]   = useState(null);
+  const [syncOk,        setSyncOk]        = useState(false); // green ✓ flash on real backend exchange
 
   const [viewedDate, setViewedDate] = useState(() => logicalNow());
 
@@ -116,8 +117,10 @@ export default function App() {
       const fresh = await fetchConfig();
       setConfigStore(fresh);
       setCachedConfig(fresh);
+      return fresh;  // caller checks for real (non-empty) data
     } catch (err) {
       setConfigError(String(err.message || err));
+      return null;
     } finally {
       setConfigLoading(false);
     }
@@ -139,18 +142,39 @@ export default function App() {
     } catch { /* offline / failure → keep current optimistic state */ }
   }, []);
 
-  // The ⟳ button refreshes both plan-config and Польза done-state.
-  const refreshAll = useCallback(() => {
-    refreshConfig();
+  const flashSyncOk = useCallback(() => {
+    setSyncOk(true);
+    setTimeout(() => setSyncOk(false), 1000);
+  }, []);
+
+  // Drive the offline queue to the backend and confirm the exchange.
+  // Flashes the green ✓ ONLY when a real write/delete landed on the server
+  // (POST returned ok). Offline / failed → no flash, entry stays queued.
+  const commitSync = useCallback(async () => {
+    try {
+      const res = await drainQueue();
+      if (res.ok && (res.appended + res.deleted) > 0) flashSyncOk();
+    } catch { /* stays queued, retries on next action/focus */ }
+  }, [flashSyncOk]);
+
+  // The ⟳ button: refresh plan-config + Польза done-state, AND flush pending
+  // writes. Flash ✓ if the backend answered with real plan data OR a queued
+  // write actually landed — either proves a genuine round-trip to the server.
+  const refreshAll = useCallback(async () => {
+    const fresh = await refreshConfig();
     refreshPolzaLog();
-  }, [refreshConfig, refreshPolzaLog]);
+    let wrote = { appended: 0, deleted: 0, ok: true };
+    try { wrote = await drainQueue(); } catch { /* ignore */ }
+    const gotRealData     = !!fresh && Array.isArray(fresh.exercises) && fresh.exercises.length > 0;
+    const wroteSomething  = wrote.ok && (wrote.appended + wrote.deleted) > 0;
+    if (gotRealData || wroteSomething) flashSyncOk();
+  }, [refreshConfig, refreshPolzaLog, flashSyncOk]);
 
   useEffect(() => {
     const cached = getCachedConfig();
     if (cached) setConfigStore(cached);  // instant paint from cache
-    refreshConfig();                      // then fetch fresh config
-    refreshPolzaLog();                    // and Польза done-state
-  }, [refreshConfig, refreshPolzaLog]);
+    refreshAll();                         // fetch fresh + flash ✓ on real exchange
+  }, [refreshAll]);
 
   // Drain offline queue on tab focus / reconnect; also re-pull Польза state.
   useEffect(() => {
@@ -223,6 +247,7 @@ export default function App() {
     const entry = buildEntry(ex, fields, setNum);
     logSetOptimistic(entry);
     setLogsMap(prev => addToMap(prev, weekIso, [entry]));
+    commitSync();
   };
 
   // Card tap: save all remaining sets from MultiSetModal.
@@ -239,6 +264,7 @@ export default function App() {
     for (const entry of newLogs) logSetOptimistic(entry);
     setLogsMap(prev => addToMap(prev, weekIso, newLogs));
     setMultiSetExId(null);
+    commitSync();
   };
 
   // Minus button: remove the last logged set for an exercise on the viewed day.
@@ -250,6 +276,7 @@ export default function App() {
     const last = entries[entries.length - 1];
     setLogsMap(prev => removeFromMap(prev, weekIso, last.timestamp));
     removeOptimistic(last.timestamp, weekIso);
+    commitSync();
   };
 
   // ── Habits ────────────────────────────────────────────────────────────────
@@ -259,6 +286,7 @@ export default function App() {
     const entry = buildEntry({ id: habitLogId(id), name: h.name }, {}, 1);
     logSetOptimistic(entry);
     setLogsMap(prev => addToMap(prev, weekIso, [entry]));
+    commitSync();
   };
 
   const removeHabit = (id) => {
@@ -268,6 +296,7 @@ export default function App() {
     const last = entries[entries.length - 1];
     setLogsMap(prev => removeFromMap(prev, weekIso, last.timestamp));
     removeOptimistic(last.timestamp, weekIso);
+    commitSync();
   };
 
   // ── Польза ────────────────────────────────────────────────────────────────
@@ -281,6 +310,7 @@ export default function App() {
     setLogsMap(prev => addToMap(prev, weekIso, [entry]));
     setPolzaLog(prev => [...prev, { id, date: dateStr, timestamp: String(entry.timestamp) }]);
     setUndoState({ kind: "polza", id, timestamp: entry.timestamp });
+    commitSync();
   };
 
   const undoPolza = () => {
@@ -290,6 +320,7 @@ export default function App() {
     removeOptimistic(timestamp, weekIso);
     setPolzaLog(prev => prev.filter(e => e.timestamp !== String(timestamp)));
     setUndoState(null);
+    commitSync();
   };
 
   // Compute target + done for modal (relative to viewed day).
@@ -315,7 +346,7 @@ export default function App() {
     logHabit, removeHabit,
     polzaLog, logPolza,
     // Config refresh (pull plan/habits/polza from sheet) + Польза done-state
-    refreshConfig: refreshAll, configLoading, configError,
+    refreshConfig: refreshAll, configLoading, configError, syncOk,
   };
 
   // Bottom padding: Sport view has fixed ProgressBar (h~88) + TabBar (h-14) above it.
