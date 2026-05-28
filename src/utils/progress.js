@@ -24,21 +24,27 @@ function scheduledDays(exId) {
   return WEEK.filter(d => schedule[d].strength.includes(exId));
 }
 
-// weekLogs: array of Log rows for the CURRENT week_iso (already filtered).
-// Returns today's target set count for a strength exercise with deficit/surplus carry baked in.
+// weekLogs: Log rows for the CURRENT week_iso (already filtered).
+// Walks scheduled days chronologically up to the viewed day, accumulating signed `carry`:
 //
-// Walk PRIOR scheduled days of this exercise chronologically (by WEEK order).
-// CRITICAL: only days STRICTLY BEFORE the actual current weekday count toward carry.
-// Per user rule: "недовыполненное значение переезжает [только] до 4 утра [следующего дня]" —
-// the carry rule fires only after a day rolls over the 04:00 boundary. While today is
-// in progress, its (in)completeness must not inflate future targets; same for unviewed
-// future days.
+//   carry_out = base + carry_in - done_at_that_day
 //
-//   carry_out = base + carry_in - donePrior   (unclamped — preserves surplus excess)
-//   target_today = max(0, base_today + carry_in_today)
+// Two regimes for "done_at_that_day", split at the 04:00 logical-day boundary:
 //
-// Today's own logs do NOT change today's target; logging on a closed past day retroactively
-// recomputes downstream targets.
+//   CLOSED past day (priorIdx < actualTodayIdx):
+//     done = actual logged count for that day. Deficit/surplus is REAL.
+//
+//   Today or future day (priorIdx >= actualTodayIdx):
+//     done = expected = max(0, base + carry_in)  (the displayed target on that day).
+//     Per user's stated rule, the carry only "переезжает" after 04:00 next day.
+//     So an in-progress or unviewed-future day is ASSUMED to hit its displayed target.
+//     This makes carry_out for such days = min(0, base + carry_in) — deficit is fully
+//     consumed by that day's displayed target (carry_out = 0), surplus passes through
+//     intact (negative). Crucial: prevents double-counting a missed past day on every
+//     subsequent scheduled day. Sum(displayed targets) stays ≤ Total Load invariant.
+//
+// Today's own logs do NOT change today's target (it shows base + accumulated carry).
+// Logging on a CLOSED past day retroactively recomputes downstream targets.
 export function strengthTargetToday(exId, day, weekLogs) {
   const { exerciseById, schedule } = getConfig();
   const ex = exerciseById[exId];
@@ -51,18 +57,23 @@ export function strengthTargetToday(exId, day, weekLogs) {
   const todayPos = sched.indexOf(day);
   if (todayPos <= 0) return base;  // first scheduled day → no prior carry, target = base
 
-  // "Closed" days = strictly before the actual current weekday.
-  // Future days and the current-in-progress day are excluded from carry.
   const actualTodayIdx = WEEK.indexOf(getRussianDay(logicalNow()));
 
   let carry = 0;
   for (let i = 0; i < todayPos; i++) {
     const priorDay = sched[i];
-    if (WEEK.indexOf(priorDay) >= actualTodayIdx) break; // not closed yet → stop
-    const priorDone = weekLogs.filter(
-      r => r.exercise_id === exId && r.day === priorDay
-    ).length;
-    carry = base + carry - priorDone;  // signed: + = deficit owed, − = surplus to absorb
+    const priorIdx = WEEK.indexOf(priorDay);
+    if (priorIdx < actualTodayIdx) {
+      // Closed past day: use actual.
+      const priorDone = weekLogs.filter(
+        r => r.exercise_id === exId && r.day === priorDay
+      ).length;
+      carry = base + carry - priorDone;
+    } else {
+      // Today or future, still open: assume hits displayed target.
+      // Deficit lands on it (carry → 0); surplus passes through (stays negative).
+      carry = Math.min(0, base + carry);
+    }
   }
 
   return Math.max(0, base + carry);
