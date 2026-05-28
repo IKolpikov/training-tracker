@@ -75,14 +75,22 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
   const update = (i, key, val) =>
     setSets(prev => prev.map((s, idx) => idx === i ? { ...s, [key]: val } : s));
 
-  // Save only the sets that aren't logged yet (from index `done` onwards)
+  // On OK: collect edits to already-logged sets (value changed vs server) AND
+  // new sets to add. Edits replace the old row (delete + re-append) on the backend.
   const handleOK = () => {
-    if (remaining <= 0) { onClose(); return; }
-    const toSave = Array.from({ length: remaining }, (_, i) => {
+    const edits = [];
+    for (let i = 0; i < loggedSets.length && i < sets.length; i++) {
+      const orig = blockFromEntry(exercise, loggedSets[i]);
+      const cur  = sets[i];
+      const changed = fields.some(f => String(cur[f.key] ?? "") !== String(orig[f.key] ?? ""));
+      if (changed) edits.push({ timestamp: loggedSets[i].timestamp, fields: toEntryFields(exercise, cur) });
+    }
+    const additions = Array.from({ length: remaining }, (_, i) => {
       const setIdx = Math.min(done + i, sets.length - 1);
       return toEntryFields(exercise, sets[setIdx]);
     });
-    onSave(toSave);
+    if (edits.length === 0 && additions.length === 0) { onClose(); return; }
+    onSave(additions, edits);
   };
 
   // Horizontal swipe (left or right) → close. Ignore vertical scrolling.
@@ -161,8 +169,7 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
                         step="any"
                         value={sets[i]?.[f.key] ?? ""}
                         onChange={e => update(i, f.key, e.target.value)}
-                        disabled={isDone}
-                        className="h-11 px-3 rounded-lg bg-slate-900 border border-slate-700 text-base outline-none focus:border-amber-500 disabled:text-slate-600 disabled:border-slate-800 w-full"
+                        className="h-11 px-3 rounded-lg bg-slate-900 border border-slate-700 text-base outline-none focus:border-amber-500 w-full"
                       />
                     </label>
                   ))}
@@ -171,10 +178,6 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
             );
           })}
         </div>
-
-        {remaining === 0 && (
-          <p className="text-center text-emerald-400 text-sm py-1">Все сеты выполнены ✓</p>
-        )}
 
         <button
           onClick={handleOK}

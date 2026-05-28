@@ -255,19 +255,30 @@ export default function App() {
     commitSync();
   };
 
-  // Card tap: save all remaining sets from MultiSetModal.
-  // Each row gets a distinct ms-offset timestamp so deletes target one set only.
-  const saveMultipleSets = (entriesFields) => {
-    const ex          = exerciseById[multiSetExId];
+  // Save from MultiSetModal: `additions` = brand-new sets, `edits` = changes to
+  // already-logged sets. An edit replaces the old row (delete it, append a new one
+  // with the edited reps/load). Each row gets a unique ms-offset timestamp.
+  const saveMultipleSets = (additions, edits = []) => {
+    const ex = exerciseById[multiSetExId];
+    let base = Date.now();
+    const mk = (fields, setNum) =>
+      buildEntry(ex, fields, setNum, new Date(base++).toISOString().slice(0, 23));
+
+    // Edits: drop old rows (state + server) and build replacements.
+    const editTs   = edits.map(e => String(e.timestamp));
+    const editLogs = edits.map((e, i) => mk(e.fields, i + 1));
+    for (const e of edits) removeOptimistic(e.timestamp, weekIso);
+
+    // Additions: new sets after what's already logged.
     const currentDone = dayLogs.filter(r => r.exercise_id === multiSetExId).length;
-    const base        = Date.now();
+    const addLogs = additions.map((fields, i) => mk(fields, currentDone + i + 1));
 
-    const newLogs = entriesFields.map((fields, i) =>
-      buildEntry(ex, fields, currentDone + i + 1, new Date(base + i).toISOString().slice(0, 23))
-    );
-
-    for (const entry of newLogs) logSetOptimistic(entry);
-    setLogsMap(prev => addToMap(prev, weekIso, newLogs));
+    const all = [...editLogs, ...addLogs];
+    for (const entry of all) logSetOptimistic(entry);
+    setLogsMap(prev => {
+      const cleaned = (prev[weekIso] || []).filter(r => !editTs.includes(String(r.timestamp)));
+      return { ...prev, [weekIso]: [...cleaned, ...all] };
+    });
     setMultiSetExId(null);
     commitSync();
   };
