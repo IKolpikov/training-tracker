@@ -7,7 +7,7 @@ import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
 //  - Past day view:        show ONLY items done on that exact day (history mode, no actives)
 //  Items done on OTHER days don't show on today's view (they're archived lifetime).
 export default function PolzaView() {
-  const { dateStr, polzaLog, logPolza } = useDay();
+  const { dateStr, polzaLog, logPolza, openAddPolza } = useDay();
   const { polza } = useConfig();
 
   // ids done on the viewed day, and ids done ever (lifetime archive) — both from polzaLog
@@ -62,6 +62,15 @@ export default function PolzaView() {
           </button>
         );
       })}
+
+      {/* Add new task — only on today/future; past days are history-only. */}
+      {!isPast && (
+        <button
+          onClick={openAddPolza}
+          className="w-full h-12 mt-1 rounded-xl border border-dashed border-slate-700 text-slate-500 text-base font-medium active:bg-slate-800"
+          aria-label="Добавить дело"
+        >+ добавить</button>
+      )}
     </div>
   );
 }

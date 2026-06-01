@@ -32,6 +32,12 @@ const HEADERS  = [
   "set_number","reps","load","unit","notes","distance_km","duration_min","quality_min"
 ];
 
+// Columns that must be stored as PLAIN TEXT so values round-trip byte-for-byte
+// (no Sheets Date coercion / no tz shift / no trailing-zero collapse). 1-indexed.
+//   1 timestamp · 2 date · 12 distance_km · 13 duration_min · 14 quality_min
+const TEXT_FORMAT_COLS = [1, 2, 12, 13, 14];
+const TS_COL = HEADERS.indexOf("timestamp"); // 0
+
 // ── Canonical name → id maps ────────────────────────────────────────────────
 // Match the ids the app's hardcoded defaults use, so existing Log history
 // (writted with these ids) stays linked when the sheet becomes source of truth.
@@ -179,6 +185,48 @@ function n_(v) {
   return isNaN(n) ? null : n;
 }
 
+// Pre-set TEXT_FORMAT_COLS to plain text on a (yet-to-be-written) row.
+function forceTextFormat_(sh, rowIdx) {
+  TEXT_FORMAT_COLS.forEach(c => sh.getRange(rowIdx, c).setNumberFormat("@"));
+}
+
+// Render any timestamp cell value to the canonical "yyyy-MM-dd'T'HH:mm:ss.SSS"
+// string so comparisons work whether Sheets stored it as text or as a Date.
+function tsCellToString_(cell) {
+  return (cell instanceof Date)
+    ? Utilities.formatDate(cell, "UTC", "yyyy-MM-dd'T'HH:mm:ss.SSS")
+    : String(cell).trim();
+}
+
+// Return 1-indexed row numbers in the Log sheet whose timestamp column matches.
+function findLogRowsByTimestamp_(sh, timestamp) {
+  const target = String(timestamp || "").trim();
+  if (!target) return [];
+  const values = sh.getDataRange().getValues();
+  const rows = [];
+  for (let r = 1; r < values.length; r++) {
+    if (tsCellToString_(values[r][TS_COL]) === target) rows.push(r + 1);
+  }
+  return rows;
+}
+
+// Inspect a Польза-tab sheet, returning header layout so both getPolza_ and
+// addPolzaItem_ agree on where to read/write id+name.
+function detectPolzaLayout_(sh) {
+  const vals = sh.getDataRange().getValues();
+  const HEADER_WORDS = ["id", "name", "польза", "задача", "дело", "рутина", "день"];
+  const firstRow = (vals[0] || []).map(c => s_(c).toLowerCase());
+  const hasHeader = firstRow.some(c => HEADER_WORDS.indexOf(c) !== -1);
+  if (!hasHeader) return { vals: vals, hasHeader: false, idCol: -1, nameCol: 0 };
+  const idCol = firstRow.indexOf("id");
+  let nameCol = -1;
+  for (let i = 0; i < firstRow.length; i++) {
+    if (i !== idCol && firstRow[i]) { nameCol = i; break; }
+  }
+  if (nameCol < 0) nameCol = idCol === 0 ? 1 : 0;
+  return { vals: vals, hasHeader: true, idCol: idCol, nameCol: nameCol, width: firstRow.length };
+}
+
 // Find a "name-like" column when headers vary. Tries common names, then any non-meta column.
 function findFirstHeader_(headers, candidates, exclude) {
   for (const c of candidates) {
@@ -266,50 +314,35 @@ function getHabits_() {
 // looks like a header (contains a known header keyword).
 function getPolza_() {
   const sh = getConfigSheet_(POLZA_TAB);
-  const vals = sh.getDataRange().getValues();
-  if (!vals.length) return json_({ ok: true, rows: [] });
-
-  const HEADER_WORDS = ["id", "name", "польза", "задача", "дело", "рутина", "день"];
-  const firstRow = vals[0].map(c => s_(c).toLowerCase());
-  const hasHeader = firstRow.some(c => HEADER_WORDS.indexOf(c) !== -1);
-
-  let idCol = -1, nameCol = 0, startRow = 0;
-  if (hasHeader) {
-    startRow = 1;
-    idCol = firstRow.indexOf("id");
-    // name column = first non-id non-empty header cell
-    for (let i = 0; i < firstRow.length; i++) {
-      if (i !== idCol && firstRow[i]) { nameCol = i; break; }
-    }
-  }
-
+  const layout = detectPolzaLayout_(sh);
+  if (!layout.vals.length) return json_({ ok: true, rows: [] });
+  const startRow = layout.hasHeader ? 1 : 0;
   const out = [];
-  for (let r = startRow; r < vals.length; r++) {
-    const name = s_(vals[r][nameCol]);
+  for (let r = startRow; r < layout.vals.length; r++) {
+    const name = s_(layout.vals[r][layout.nameCol]);
     if (!name) continue;
-    const explicitId = (idCol !== -1) ? vals[r][idCol] : "";
+    const explicitId = layout.idCol >= 0 ? layout.vals[r][layout.idCol] : "";
     out.push({ id: resolveId_(explicitId, name, CANONICAL_POLZA_IDS), name });
   }
   return json_({ ok: true, rows: out });
 }
 
-// POST body:
-//   - { action: "delete", timestamp } → remove all Log rows with that timestamp
-//   - otherwise a single Log entry (object keyed by HEADERS) → append one row
+// POST body actions:
+//   - { action: "delete", timestamp }                       → remove matching Log rows
+//   - { action: "update", timestamp, fields:{header: val} } → patch matching row(s) in place
+//   - { action: "addPolza", name }                          → append a new task to Польза tab
+//   - otherwise a single Log entry (object keyed by HEADERS) → append one row to Log
 function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
-    if (body && body.action === "delete") return deleteLogRows_(body.timestamp);
+    if (body && body.action === "delete")   return deleteLogRows_(body.timestamp);
+    if (body && body.action === "update")   return updateLogRow_(body.timestamp, body.fields);
+    if (body && body.action === "addPolza") return addPolzaItem_(body.name);
 
     const sh  = getLogSheet_();
     const row = HEADERS.map(h => (body[h] !== undefined && body[h] !== null) ? body[h] : "");
     const r   = sh.getLastRow() + 1;
-    // Force certain columns to PLAIN TEXT before writing so values round-trip
-    // byte-for-byte (Sheets would otherwise coerce them):
-    //   1 timestamp, 2 date  → no timezone shift
-    //   12 distance_km, 13 duration_min, 14 quality_min → m.ss interval times keep
-    //      exact seconds (e.g. "8.20" stays "8.20", not collapsed to 8.2)
-    [1, 2, 12, 13, 14].forEach(c => sh.getRange(r, c).setNumberFormat("@"));
+    forceTextFormat_(sh, r);
     sh.getRange(r, 1, 1, row.length).setValues([row]);
     return json_({ ok: true });
   } catch (err) {
@@ -320,24 +353,47 @@ function doPost(e) {
 // Delete every Log row whose timestamp (column A) matches. Timestamps are unique
 // per set (ms precision), so this removes exactly the intended entry.
 function deleteLogRows_(timestamp) {
-  const target = String(timestamp || "").trim();
-  if (!target) return json_({ ok: false, error: "delete: missing timestamp" });
-
+  if (!s_(timestamp)) return json_({ ok: false, error: "delete: missing timestamp" });
   const sh = getLogSheet_();
-  const values = sh.getDataRange().getValues();
-  const tsCol = HEADERS.indexOf("timestamp"); // column 0
-  let deleted = 0;
+  // Delete bottom-up so 1-indexed row numbers stay valid.
+  const rows = findLogRowsByTimestamp_(sh, timestamp).sort((a, b) => b - a);
+  rows.forEach(r => sh.deleteRow(r));
+  return json_({ ok: true, deleted: rows.length });
+}
 
-  // Iterate bottom-up so row indices stay valid as we delete. Row 0 = headers.
-  for (let r = values.length - 1; r >= 1; r--) {
-    const cell = values[r][tsCol];
-    const cellStr = (cell instanceof Date)
-      ? Utilities.formatDate(cell, "UTC", "yyyy-MM-dd'T'HH:mm:ss.SSS")
-      : String(cell).trim();
-    if (cellStr === target) {
-      sh.deleteRow(r + 1); // sheet rows are 1-indexed
-      deleted++;
-    }
+// Update the row(s) whose timestamp (col A) matches: patch only the columns named
+// in `fields` (header → value). Preserves the timestamp / row identity → no race
+// with delete+append, no risk of losing a row when network flakes.
+function updateLogRow_(timestamp, fields) {
+  if (!s_(timestamp)) return json_({ ok: false, error: "update: missing timestamp" });
+  fields = fields || {};
+  const sh = getLogSheet_();
+  const rows = findLogRowsByTimestamp_(sh, timestamp);
+  rows.forEach(r => {
+    forceTextFormat_(sh, r); // keeps text-preserved cols consistent post-patch
+    Object.keys(fields).forEach(h => {
+      const c = HEADERS.indexOf(h);
+      if (c >= 0) sh.getRange(r, c + 1).setValue(fields[h]);
+    });
+  });
+  return json_({ ok: true, updated: rows.length });
+}
+
+// Append a new task to the Польза tab. id derives from name (canonical map → slug).
+function addPolzaItem_(name) {
+  const trimmed = s_(name);
+  if (!trimmed) return json_({ ok: false, error: "addPolza: empty name" });
+  const id = resolveId_("", trimmed, CANONICAL_POLZA_IDS);
+
+  const sh = getConfigSheet_(POLZA_TAB);
+  const layout = detectPolzaLayout_(sh);
+  if (layout.hasHeader) {
+    const row = new Array(layout.width).fill("");
+    if (layout.idCol >= 0) row[layout.idCol] = id;
+    row[layout.nameCol] = trimmed;
+    sh.appendRow(row);
+  } else {
+    sh.appendRow([trimmed]); // bare list in column A
   }
-  return json_({ ok: true, deleted: deleted });
+  return json_({ ok: true, id: id, name: trimmed });
 }

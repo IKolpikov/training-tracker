@@ -7,9 +7,12 @@
 //   A module-level singleton lets pure functions read current config; the useConfig()
 //   hook on top makes React components reactively re-render when config changes.
 
-import { defaultConfig } from "../services/config.js";
+import { defaultConfig, getCachedConfig } from "../services/config.js";
 
-let _state = defaultConfig();
+// Cache-first bootstrap: prefer the previous session's fetched config over
+// hardcoded defaults. Eliminates the brief "[0/2]" / wrong-plan flash on cold
+// load before the server fetch completes.
+let _state = getCachedConfig() || defaultConfig();
 const _listeners = new Set();
 
 export function getConfig() {

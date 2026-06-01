@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DayContext } from "./DayContext.jsx";
 import {
   dateStr as toDateStr,
@@ -7,9 +7,12 @@ import {
   logicalNow,
   realTimestamp
 } from "./utils/date.js";
-import { loadWeek, logSetOptimistic, drainQueue, removeOptimistic } from "./services/sync.js";
+import {
+  loadWeek, logSetOptimistic, drainQueue, removeOptimistic, applyEditOptimistic,
+} from "./services/sync.js";
+import { getCachedWeekLogs } from "./services/cache.js";
 import { fetchConfig, getCachedConfig, setCachedConfig } from "./services/config.js";
-import { fetchAllLogs } from "./services/sheets.js";
+import { fetchAllLogs, addPolzaTask } from "./services/sheets.js";
 import { setConfig as setConfigStore } from "./data/configStore.js";
 import { useConfig } from "./useConfig.js";
 import {
@@ -23,6 +26,9 @@ import {
   isPolzaLog,
   polzaIdFromLog,
 } from "./data/polza.js";
+import {
+  getPending, setPending, clearPending, listPending,
+} from "./services/pending.js";
 import DayHeader from "./components/DayHeader.jsx";
 import ExerciseList from "./components/ExerciseList.jsx";
 import ProgressBar from "./components/ProgressBar.jsx";
@@ -30,6 +36,7 @@ import MultiSetModal from "./components/MultiSetModal.jsx";
 import TabBar from "./components/TabBar.jsx";
 import HabitsView from "./components/HabitsView.jsx";
 import PolzaView from "./components/PolzaView.jsx";
+import AddPolzaModal from "./components/AddPolzaModal.jsx";
 import UndoSnackbar from "./components/UndoSnackbar.jsx";
 
 // Earliest date user can navigate to. History starts here.
@@ -48,11 +55,17 @@ export default function App() {
 
   // ── logsMap: { [weekIso]: Log[] } ────────────────────────────────────────
   // Keeps data for every week we've visited in memory.
-  // Navigating away and back to a week never loses optimistically-logged entries.
-  const [logsMap, setLogsMap] = useState({});
+  // Cache-first bootstrap: prime with the current week's cached rows so the
+  // first render shows last-known data (no [0/2] flash) instead of empty.
+  const [logsMap, setLogsMap] = useState(() => {
+    const w = getWeekNumber(logicalNow());
+    const cached = getCachedWeekLogs(w);
+    return cached.length ? { [w]: cached } : {};
+  });
 
   const [loading, setLoading]           = useState(true);
   const [multiSetExId, setMultiSetExId] = useState(null);
+  const [addPolzaOpen, setAddPolzaOpen] = useState(false);
 
   // Tab navigation: "sport" | "habits" | "polza".
   const [activeTab, setActiveTab] = useState("sport");
@@ -235,13 +248,18 @@ export default function App() {
     };
   }
 
-  // [+] button: log 1 set with defaults, no modal.
+  // [+] button: log 1 set. Uses pending values for this slot if the user typed
+  // them in the modal earlier; otherwise plan defaults.
   const quickLog = (exId) => {
-    const ex     = exerciseById[exId];
-    const setNum = dayLogs.filter(r => r.exercise_id === exId).length + 1;
-    let fields   = {};
+    const ex      = exerciseById[exId];
+    const done    = dayLogs.filter(r => r.exercise_id === exId).length;
+    const setNum  = done + 1;
+    const pending = getPending(exId, dateStr, done); // pending is 0-indexed by setIdx
 
-    if (ex.type === "STR") {
+    let fields = {};
+    if (pending) {
+      fields = pending;
+    } else if (ex.type === "STR") {
       fields = { reps: ex.defaultReps ?? "", load: ex.defaultLoad ?? "", unit: ex.unit ?? "" };
     } else if (ex.type === "ISO") {
       fields = { reps: 1, load: ex.defaultLoad ?? "", unit: "sec" };
@@ -252,46 +270,60 @@ export default function App() {
     const entry = buildEntry(ex, fields, setNum);
     logSetOptimistic(entry);
     setLogsMap(prev => addToMap(prev, weekIso, [entry]));
+    if (pending) clearPending(exId, dateStr, done);
     commitSync();
   };
 
-  // Save from MultiSetModal: `additions` = brand-new sets, `edits` = changes to
-  // already-logged sets. An edit replaces the old row (delete it, append a new one
-  // with the edited reps/load). Each row gets a unique ms-offset timestamp.
-  const saveMultipleSets = (additions, edits = []) => {
-    const ex = exerciseById[multiSetExId];
-    let base = Date.now();
-    const mk = (fields, setNum) =>
-      buildEntry(ex, fields, setNum, new Date(base++).toISOString().slice(0, 23));
+  // Save from MultiSetModal under the NEW model:
+  //   edits    — [{ timestamp, fields }] for already-logged sets the user actually edited.
+  //              Patched IN PLACE via update endpoint (no delete+append race, no data loss).
+  //   pendings — [{ setIdx, fields }] for not-yet-logged sets the user typed values into.
+  //              Stashed in localStorage; consumed by the next [+] tap on the card.
+  //   The modal NEVER creates log rows. Card counter is the sole source of "done".
+  const saveMultipleSets = (edits = [], pendings = []) => {
+    const exId = multiSetExId;
 
-    // Edits: drop old rows (state + server) and build replacements.
-    const editTs   = edits.map(e => String(e.timestamp));
-    const editLogs = edits.map((e, i) => mk(e.fields, i + 1));
-    for (const e of edits) removeOptimistic(e.timestamp, weekIso);
+    // 1. Patch edited rows everywhere (cache + queue + server update queue).
+    for (const e of edits) applyEditOptimistic(e.timestamp, weekIso, e.fields);
+    if (edits.length) {
+      const editPatch = new Map(edits.map(e => [String(e.timestamp), e.fields]));
+      setLogsMap(prev => ({
+        ...prev,
+        [weekIso]: (prev[weekIso] || []).map(r => {
+          const patch = editPatch.get(String(r.timestamp));
+          return patch ? { ...r, ...patch } : r;
+        }),
+      }));
+    }
 
-    // Additions: new sets after what's already logged.
-    const currentDone = dayLogs.filter(r => r.exercise_id === multiSetExId).length;
-    const addLogs = additions.map((fields, i) => mk(fields, currentDone + i + 1));
+    // 2. Stash pending values for future sets.
+    for (const p of pendings) setPending(exId, dateStr, p.setIdx, p.fields);
 
-    const all = [...editLogs, ...addLogs];
-    for (const entry of all) logSetOptimistic(entry);
-    setLogsMap(prev => {
-      const cleaned = (prev[weekIso] || []).filter(r => !editTs.includes(String(r.timestamp)));
-      return { ...prev, [weekIso]: [...cleaned, ...all] };
-    });
     setMultiSetExId(null);
-    commitSync();
+    if (edits.length) commitSync();
   };
 
   // Minus button: remove the last logged set for an exercise on the viewed day.
-  // Removes from React state immediately; also cleans queue+cache for unsynced entries.
-  // Already-synced entries reappear on the next server refresh (acceptable MVP trade-off).
+  // The card's invisible left-edge button + a long-press requirement guards against
+  // accidental taps. We ALSO stash the removed row + show an Undo snackbar so an
+  // accidental delete is recoverable for 5 seconds.
   const removeLastSet = (exId) => {
     const entries = dayLogs.filter(r => r.exercise_id === exId);
     if (entries.length === 0) return;
     const last = entries[entries.length - 1];
     setLogsMap(prev => removeFromMap(prev, weekIso, last.timestamp));
     removeOptimistic(last.timestamp, weekIso);
+    setUndoState({ kind: "set", exId, entry: last, timestamp: last.timestamp });
+    commitSync();
+  };
+
+  // Restore a just-removed set (Undo). Re-append it locally + on the server.
+  const undoRemoveLastSet = () => {
+    if (!undoState || undoState.kind !== "set") return;
+    const { entry } = undoState;
+    logSetOptimistic(entry);
+    setLogsMap(prev => addToMap(prev, weekIso, [entry]));
+    setUndoState(null);
     commitSync();
   };
 
@@ -305,15 +337,8 @@ export default function App() {
     commitSync();
   };
 
-  const removeHabit = (id) => {
-    const logId   = habitLogId(id);
-    const entries = dayLogs.filter(r => r.exercise_id === logId);
-    if (entries.length === 0) return;
-    const last = entries[entries.length - 1];
-    setLogsMap(prev => removeFromMap(prev, weekIso, last.timestamp));
-    removeOptimistic(last.timestamp, weekIso);
-    commitSync();
-  };
+  // Same shape as removeLastSet, just with the habit_*-prefixed exId.
+  const removeHabit = (id) => removeLastSet(habitLogId(id));
 
   // ── Польза ────────────────────────────────────────────────────────────────
   // Done-state lives in polzaLog (server-derived). We add an optimistic entry
@@ -339,7 +364,7 @@ export default function App() {
     commitSync();
   };
 
-  // Compute target + done for modal (relative to viewed day).
+  // Compute target + done + logged entries + pending typed-for-future for the modal.
   const modalProps = useMemo(() => {
     if (!multiSetExId || !schedule[day]) return null;
     const isStrength = schedule[day].strength.includes(multiSetExId);
@@ -347,23 +372,23 @@ export default function App() {
       ? strengthTargetToday(multiSetExId, day, weekLogs)
       : cardioTargetToday(multiSetExId, day);
     const done = doneToday(multiSetExId, dateStr, dayLogs);
-    // Actual logged rows (reps/load) for this exercise on the viewed day, in order —
-    // so the modal shows what was really entered, refreshed from the server by loadWeek.
     const entries = dayLogs.filter(r => r.exercise_id === multiSetExId);
-    return { target, done, entries };
+    const pendings = listPending(multiSetExId, dateStr);
+    return { target, done, entries, pendings };
   }, [multiSetExId, day, weekLogs, dayLogs, dateStr]);
 
   // ── context ───────────────────────────────────────────────────────────────
   const ctx = {
     viewedDate, dateStr, day, weekIso,
     weekLogs, dayLogs, loading,
-    quickLog, removeLastSet,
+    quickLog, removeLastSet, undoRemoveLastSet,
     openMultiSet: setMultiSetExId,
     refresh,
     goPrev, goNext, prevDisabled,
     // Habits + Польза
     logHabit, removeHabit,
     polzaLog, logPolza,
+    openAddPolza: () => setAddPolzaOpen(true),
     // Config refresh (pull plan/habits/polza from sheet) + Польза done-state
     refreshConfig: refreshAll, configLoading, configError, lastSync,
   };
@@ -372,11 +397,36 @@ export default function App() {
   // Habits/Польза only have TabBar.
   const mainPb = activeTab === "sport" ? "pb-44" : "pb-20";
 
+  // ── horizontal swipe between days (mobile) ────────────────────────────────
+  // Triggers only on a strongly-horizontal gesture so vertical scrolling stays
+  // intact. Threshold tuned so accidental sub-50px drags don't change day.
+  const swipeStart = useRef(null);
+  const onContentTouchStart = (e) => {
+    const t = e.touches[0];
+    swipeStart.current = { x: t.clientX, y: t.clientY };
+  };
+  const onContentTouchEnd = (e) => {
+    const s = swipeStart.current;
+    if (!s) return;
+    swipeStart.current = null;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - s.x;
+    const dy = Math.abs(t.clientY - s.y);
+    if (Math.abs(dx) < 60) return;
+    if (Math.abs(dx) <= dy * 1.3) return; // mostly vertical — let scroll win
+    if (dx < 0) goNext();                  // swipe left → next day
+    else if (!prevDisabled) goPrev();      // swipe right → previous day
+  };
+
   return (
     <DayContext.Provider value={ctx}>
       <div className={`mx-auto max-w-[420px] min-h-full flex flex-col ${mainPb}`}>
         <DayHeader />
-        <main className="flex-1 px-4 py-3">
+        <main
+          className="flex-1 px-4 py-3"
+          onTouchStart={onContentTouchStart}
+          onTouchEnd={onContentTouchEnd}
+        >
           {activeTab === "sport"  && <ExerciseList />}
           {activeTab === "habits" && <HabitsView />}
           {activeTab === "polza"  && <PolzaView />}
@@ -394,12 +444,31 @@ export default function App() {
           />
         )}
 
+        {undoState && undoState.kind === "set" && (
+          <UndoSnackbar
+            message="Сет удалён"
+            onUndo={undoRemoveLastSet}
+            onDismiss={() => setUndoState(null)}
+          />
+        )}
+
+        {addPolzaOpen && (
+          <AddPolzaModal
+            onClose={() => setAddPolzaOpen(false)}
+            onSubmit={async (name) => {
+              await addPolzaTask(name);
+              await refreshConfig();   // pull new task from sheet
+            }}
+          />
+        )}
+
         {multiSetExId && modalProps && (
           <MultiSetModal
             exercise={exerciseById[multiSetExId]}
             target={modalProps.target}
             done={modalProps.done}
             loggedSets={modalProps.entries}
+            pendingSets={modalProps.pendings}
             onClose={() => setMultiSetExId(null)}
             onSave={saveMultipleSets}
           />

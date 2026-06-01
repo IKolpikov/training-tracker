@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -14,7 +14,6 @@ function blockDefault(ex) {
       load: ex.defaultLoad !== null && ex.defaultLoad !== undefined ? String(ex.defaultLoad) : ""
     };
   }
-  // CARDIO
   const o = {};
   for (const f of ex.cardioFields || []) {
     o[f.key] = f.default !== null && f.default !== undefined ? String(f.default) : "";
@@ -30,14 +29,12 @@ function blockFields(ex) {
   if (ex.type === "ISO") return [
     { key: "load",  label: "Удержание", unit: "sec",          inputMode: "numeric", type: "number" }
   ];
-  // CARDIO: text inputs so values like "8.12"/"8.20" are preserved EXACTLY
-  // (m.ss interval time — seconds must not be rounded or lose trailing zeros).
   return (ex.cardioFields || []).map(f => ({
     key: f.key, label: f.label, unit: f.unit || "", inputMode: "decimal", type: "text"
   }));
 }
 
-// Build block values from an actual logged row (real reps/load/cardio), not defaults.
+// Logged-row → block values.
 function blockFromEntry(ex, entry) {
   const s = (v) => (v === null || v === undefined || v === "") ? "" : String(v);
   if (ex.type === "STR") return { reps: s(entry.reps), load: s(entry.load) };
@@ -47,12 +44,11 @@ function blockFromEntry(ex, entry) {
   return o;
 }
 
+// Block values → Log row fields (the bits we write to the row).
 function toEntryFields(ex, vals) {
   const n = (v) => (v !== "" && v !== null && v !== undefined && !isNaN(+v)) ? +v : "";
   if (ex.type === "STR") return { reps: n(vals.reps), load: n(vals.load), unit: ex.unit || "" };
   if (ex.type === "ISO") return { reps: 1, load: n(vals.load), unit: "sec" };
-  // CARDIO: keep the RAW string (no numeric coercion) so m.ss times like
-  // "8.20" / "8.05" are stored exactly, seconds intact.
   const out = {};
   for (const f of ex.cardioFields || []) {
     const v = vals[f.key];
@@ -62,45 +58,59 @@ function toEntryFields(ex, vals) {
 }
 
 // ─── component ──────────────────────────────────────────────────────────────
+//
+// loggedSets   — actual server rows for this exercise/day (editable).
+// pendingSets  — values typed earlier for not-yet-logged sets (by setIdx).
+// onSave(edits, pendings) — edits = [{timestamp,fields}] for changed logged rows;
+//                            pendings = [{setIdx,fields}] for typed future-set blocks.
+//                            Any close path (Done / ✕ / backdrop / swipe) calls this.
 
-export default function MultiSetModal({ exercise, target, done, loggedSets = [], onClose, onSave }) {
-  // Show at least every logged set (even if done > target, i.e. overlogged).
+export default function MultiSetModal({
+  exercise, target, done, loggedSets = [], pendingSets = [], onClose, onSave,
+}) {
   const N = Math.max(target, done, 1);
-  const remaining = Math.max(0, target - done);
-
-  // Done blocks → REAL logged values (reps/load from server); the rest → defaults.
-  const [sets, setSets] = useState(() =>
-    Array.from({ length: N }, (_, i) =>
-      i < loggedSets.length ? blockFromEntry(exercise, loggedSets[i]) : { ...blockDefault(exercise) }
-    )
-  );
-
-  const touchStartX = useRef(null);
-  const touchStartY = useRef(null);
   const fields = blockFields(exercise);
+
+  // Initial block values + a pending-by-setIdx lookup (computed once on mount).
+  // "touched" is derivable: a block is touched iff its current value differs
+  // from this initial snapshot — so we don't track it separately.
+  const initial = useMemo(() => {
+    const pendingMap = new Map(pendingSets.map(p => [p.setIdx, p.fields]));
+    return Array.from({ length: N }, (_, i) => {
+      if (i < loggedSets.length) return blockFromEntry(exercise, loggedSets[i]);
+      return pendingMap.get(i) ? { ...pendingMap.get(i) } : { ...blockDefault(exercise) };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [sets, setSets] = useState(() => initial.map(b => ({ ...b })));
 
   const update = (i, key, val) =>
     setSets(prev => prev.map((s, idx) => idx === i ? { ...s, [key]: val } : s));
 
-  // On OK: collect edits to already-logged sets (value changed vs server) AND
-  // new sets to add. Edits replace the old row (delete + re-append) on the backend.
-  const handleOK = () => {
+  const differsFromInitial = (i) =>
+    fields.some(f => String(sets[i]?.[f.key] ?? "") !== String(initial[i]?.[f.key] ?? ""));
+
+  // Any close path: persist edits to logged rows + pendings to future-set rows.
+  // Untouched (==initial) blocks generate neither, so plan defaults never get
+  // auto-logged or auto-stashed.
+  const persistAndClose = () => {
     const edits = [];
-    for (let i = 0; i < loggedSets.length && i < sets.length; i++) {
-      const orig = blockFromEntry(exercise, loggedSets[i]);
-      const cur  = sets[i];
-      const changed = fields.some(f => String(cur[f.key] ?? "") !== String(orig[f.key] ?? ""));
-      if (changed) edits.push({ timestamp: loggedSets[i].timestamp, fields: toEntryFields(exercise, cur) });
+    const pendings = [];
+    for (let i = 0; i < sets.length; i++) {
+      if (!differsFromInitial(i)) continue;
+      if (i < loggedSets.length) {
+        edits.push({ timestamp: loggedSets[i].timestamp, fields: toEntryFields(exercise, sets[i]) });
+      } else {
+        pendings.push({ setIdx: i, fields: toEntryFields(exercise, sets[i]) });
+      }
     }
-    const additions = Array.from({ length: remaining }, (_, i) => {
-      const setIdx = Math.min(done + i, sets.length - 1);
-      return toEntryFields(exercise, sets[setIdx]);
-    });
-    if (edits.length === 0 && additions.length === 0) { onClose(); return; }
-    onSave(additions, edits);
+    if (edits.length === 0 && pendings.length === 0) { onClose(); return; }
+    onSave(edits, pendings);
   };
 
-  // Horizontal swipe (left or right) → close. Ignore vertical scrolling.
+  // Swipe-to-close (horizontal, with vertical threshold to not break scroll).
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
   const onTouchStart = (e) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
@@ -109,17 +119,15 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
     if (touchStartX.current === null) return;
     const dx = e.changedTouches[0].clientX - touchStartX.current;
     const dy = Math.abs(e.changedTouches[0].clientY - touchStartY.current);
-    if (Math.abs(dx) > 70 && Math.abs(dx) > dy * 1.3) onClose();
+    if (Math.abs(dx) > 70 && Math.abs(dx) > dy * 1.3) persistAndClose();
     touchStartX.current = null;
     touchStartY.current = null;
   };
 
-  const okLabel = "Done";
-
   return (
     <div
       className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center"
-      onClick={onClose}
+      onClick={persistAndClose}
     >
       <div
         className="w-full max-w-[420px] bg-slate-900 border-t sm:border border-slate-800 rounded-t-2xl sm:rounded-2xl p-4 pb-6 flex flex-col gap-3 max-h-[90vh] overflow-y-auto"
@@ -136,7 +144,7 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
             )}
           </div>
           <button
-            onClick={onClose}
+            onClick={persistAndClose}
             className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-slate-400 active:bg-slate-800 text-lg"
             aria-label="Закрыть"
           >✕</button>
@@ -145,19 +153,19 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
         {/* Set blocks */}
         <div className="flex flex-col gap-2">
           {Array.from({ length: N }, (_, i) => {
-            const isDone = i < done;
+            const isLogged = i < loggedSets.length;
             return (
               <div
                 key={i}
                 className={`rounded-xl border p-3 ${
-                  isDone
+                  isLogged
                     ? "border-emerald-700/30 bg-slate-800/30"
                     : "border-slate-700 bg-slate-800"
                 }`}
               >
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-sm font-medium text-slate-300">Rep {i + 1}</span>
-                  {isDone && (
+                  {isLogged && (
                     <span className="text-emerald-400 text-xs font-medium">✓ выполнен</span>
                   )}
                 </div>
@@ -185,10 +193,10 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
         </div>
 
         <button
-          onClick={handleOK}
+          onClick={persistAndClose}
           className="w-full h-12 rounded-xl bg-amber-500 text-slate-950 font-semibold active:bg-amber-400 mt-1"
         >
-          {okLabel}
+          Done
         </button>
       </div>
     </div>

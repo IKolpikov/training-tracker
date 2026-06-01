@@ -1,0 +1,858 @@
+diff --git a/backend/Code.gs b/backend/Code.gs
+index f0a0e6b..14cf11e 100644
+--- a/backend/Code.gs
++++ b/backend/Code.gs
+@@ -293,13 +293,17 @@ function getPolza_() {
+   return json_({ ok: true, rows: out });
+ }
+ 
+-// POST body:
+-//   - { action: "delete", timestamp } → remove all Log rows with that timestamp
+-//   - otherwise a single Log entry (object keyed by HEADERS) → append one row
++// POST body actions:
++//   - { action: "delete", timestamp }                       → remove matching Log rows
++//   - { action: "update", timestamp, fields:{header: val} } → patch matching row(s) in place
++//   - { action: "addPolza", name }                          → append a new task to Польза tab
++//   - otherwise a single Log entry (object keyed by HEADERS) → append one row to Log
+ function doPost(e) {
+   try {
+     const body = JSON.parse(e.postData.contents);
+-    if (body && body.action === "delete") return deleteLogRows_(body.timestamp);
++    if (body && body.action === "delete")   return deleteLogRows_(body.timestamp);
++    if (body && body.action === "update")   return updateLogRow_(body.timestamp, body.fields);
++    if (body && body.action === "addPolza") return addPolzaItem_(body.name);
+ 
+     const sh  = getLogSheet_();
+     const row = HEADERS.map(h => (body[h] !== undefined && body[h] !== null) ? body[h] : "");
+@@ -341,3 +345,68 @@ function deleteLogRows_(timestamp) {
+   }
+   return json_({ ok: true, deleted: deleted });
+ }
++
++// Update the row(s) whose timestamp (col A) matches: patch only the columns named
++// in `fields` (header → value). Preserves the timestamp / row identity → no race
++// with delete+append, no risk of losing a row when network flakes.
++function updateLogRow_(timestamp, fields) {
++  const target = String(timestamp || "").trim();
++  if (!target) return json_({ ok: false, error: "update: missing timestamp" });
++  fields = fields || {};
++
++  const sh = getLogSheet_();
++  const values = sh.getDataRange().getValues();
++  const tsCol = HEADERS.indexOf("timestamp"); // 0
++  let updated = 0;
++
++  for (let r = 1; r < values.length; r++) {
++    const cell = values[r][tsCol];
++    const cellStr = (cell instanceof Date)
++      ? Utilities.formatDate(cell, "UTC", "yyyy-MM-dd'T'HH:mm:ss.SSS")
++      : String(cell).trim();
++    if (cellStr !== target) continue;
++
++    // Patch named columns. Force text format on date-like cols, see doPost append.
++    Object.keys(fields).forEach(h => {
++      const c = HEADERS.indexOf(h);
++      if (c < 0) return;
++      const range = sh.getRange(r + 1, c + 1);
++      if (c === 0 || c === 1 || c >= 11) range.setNumberFormat("@");
++      range.setValue(fields[h]);
++    });
++    updated++;
++  }
++  return json_({ ok: true, updated: updated });
++}
++
++// Append a new task to the Польза tab. id derives from name (canonical map → slug).
++function addPolzaItem_(name) {
++  const trimmed = s_(name);
++  if (!trimmed) return json_({ ok: false, error: "addPolza: empty name" });
++  const id = resolveId_("", trimmed, CANONICAL_POLZA_IDS);
++
++  const sh = getConfigSheet_(POLZA_TAB);
++  const vals = sh.getDataRange().getValues();
++  // Detect whether the tab has a header row (mirrors getPolza_).
++  const HEADER_WORDS = ["id", "name", "польза", "задача", "дело", "рутина", "день"];
++  const firstRow = (vals[0] || []).map(c => s_(c).toLowerCase());
++  const hasHeader = firstRow.some(c => HEADER_WORDS.indexOf(c) !== -1);
++
++  if (hasHeader) {
++    // Place id under "id" column if present, name under the first non-id column.
++    const idCol = firstRow.indexOf("id");
++    let nameCol = -1;
++    for (let i = 0; i < firstRow.length; i++) {
++      if (i !== idCol && firstRow[i]) { nameCol = i; break; }
++    }
++    if (nameCol < 0) nameCol = idCol === 0 ? 1 : 0;
++    const row = new Array(firstRow.length).fill("");
++    if (idCol >= 0) row[idCol] = id;
++    row[nameCol] = trimmed;
++    sh.appendRow(row);
++  } else {
++    // No header: bare list in column A.
++    sh.appendRow([trimmed]);
++  }
++  return json_({ ok: true, id: id, name: trimmed });
++}
+diff --git a/src/App.jsx b/src/App.jsx
+index ad28472..0f800e1 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -1,4 +1,4 @@
+-import { useCallback, useEffect, useMemo, useState } from "react";
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { DayContext } from "./DayContext.jsx";
+ import {
+   dateStr as toDateStr,
+@@ -7,9 +7,12 @@ import {
+   logicalNow,
+   realTimestamp
+ } from "./utils/date.js";
+-import { loadWeek, logSetOptimistic, drainQueue, removeOptimistic } from "./services/sync.js";
++import {
++  loadWeek, logSetOptimistic, drainQueue, removeOptimistic, applyEditOptimistic,
++} from "./services/sync.js";
++import { getCachedWeekLogs } from "./services/cache.js";
+ import { fetchConfig, getCachedConfig, setCachedConfig } from "./services/config.js";
+-import { fetchAllLogs } from "./services/sheets.js";
++import { fetchAllLogs, addPolzaTask } from "./services/sheets.js";
+ import { setConfig as setConfigStore } from "./data/configStore.js";
+ import { useConfig } from "./useConfig.js";
+ import {
+@@ -23,6 +26,9 @@ import {
+   isPolzaLog,
+   polzaIdFromLog,
+ } from "./data/polza.js";
++import {
++  getPending, setPending, clearPending, listPending,
++} from "./services/pending.js";
+ import DayHeader from "./components/DayHeader.jsx";
+ import ExerciseList from "./components/ExerciseList.jsx";
+ import ProgressBar from "./components/ProgressBar.jsx";
+@@ -30,6 +36,7 @@ import MultiSetModal from "./components/MultiSetModal.jsx";
+ import TabBar from "./components/TabBar.jsx";
+ import HabitsView from "./components/HabitsView.jsx";
+ import PolzaView from "./components/PolzaView.jsx";
++import AddPolzaModal from "./components/AddPolzaModal.jsx";
+ import UndoSnackbar from "./components/UndoSnackbar.jsx";
+ 
+ // Earliest date user can navigate to. History starts here.
+@@ -48,11 +55,17 @@ export default function App() {
+ 
+   // ── logsMap: { [weekIso]: Log[] } ────────────────────────────────────────
+   // Keeps data for every week we've visited in memory.
+-  // Navigating away and back to a week never loses optimistically-logged entries.
+-  const [logsMap, setLogsMap] = useState({});
++  // Cache-first bootstrap: prime with the current week's cached rows so the
++  // first render shows last-known data (no [0/2] flash) instead of empty.
++  const [logsMap, setLogsMap] = useState(() => {
++    const w = getWeekNumber(logicalNow());
++    const cached = getCachedWeekLogs(w);
++    return cached.length ? { [w]: cached } : {};
++  });
+ 
+   const [loading, setLoading]           = useState(true);
+   const [multiSetExId, setMultiSetExId] = useState(null);
++  const [addPolzaOpen, setAddPolzaOpen] = useState(false);
+ 
+   // Tab navigation: "sport" | "habits" | "polza".
+   const [activeTab, setActiveTab] = useState("sport");
+@@ -235,13 +248,18 @@ export default function App() {
+     };
+   }
+ 
+-  // [+] button: log 1 set with defaults, no modal.
++  // [+] button: log 1 set. Uses pending values for this slot if the user typed
++  // them in the modal earlier; otherwise plan defaults.
+   const quickLog = (exId) => {
+-    const ex     = exerciseById[exId];
+-    const setNum = dayLogs.filter(r => r.exercise_id === exId).length + 1;
+-    let fields   = {};
+-
+-    if (ex.type === "STR") {
++    const ex      = exerciseById[exId];
++    const done    = dayLogs.filter(r => r.exercise_id === exId).length;
++    const setNum  = done + 1;
++    const pending = getPending(exId, dateStr, done); // pending is 0-indexed by setIdx
++
++    let fields = {};
++    if (pending) {
++      fields = pending;
++    } else if (ex.type === "STR") {
+       fields = { reps: ex.defaultReps ?? "", load: ex.defaultLoad ?? "", unit: ex.unit ?? "" };
+     } else if (ex.type === "ISO") {
+       fields = { reps: 1, load: ex.defaultLoad ?? "", unit: "sec" };
+@@ -252,46 +270,60 @@ export default function App() {
+     const entry = buildEntry(ex, fields, setNum);
+     logSetOptimistic(entry);
+     setLogsMap(prev => addToMap(prev, weekIso, [entry]));
++    if (pending) clearPending(exId, dateStr, done);
+     commitSync();
+   };
+ 
+-  // Save from MultiSetModal: `additions` = brand-new sets, `edits` = changes to
+-  // already-logged sets. An edit replaces the old row (delete it, append a new one
+-  // with the edited reps/load). Each row gets a unique ms-offset timestamp.
+-  const saveMultipleSets = (additions, edits = []) => {
+-    const ex = exerciseById[multiSetExId];
+-    let base = Date.now();
+-    const mk = (fields, setNum) =>
+-      buildEntry(ex, fields, setNum, new Date(base++).toISOString().slice(0, 23));
+-
+-    // Edits: drop old rows (state + server) and build replacements.
+-    const editTs   = edits.map(e => String(e.timestamp));
+-    const editLogs = edits.map((e, i) => mk(e.fields, i + 1));
+-    for (const e of edits) removeOptimistic(e.timestamp, weekIso);
+-
+-    // Additions: new sets after what's already logged.
+-    const currentDone = dayLogs.filter(r => r.exercise_id === multiSetExId).length;
+-    const addLogs = additions.map((fields, i) => mk(fields, currentDone + i + 1));
+-
+-    const all = [...editLogs, ...addLogs];
+-    for (const entry of all) logSetOptimistic(entry);
+-    setLogsMap(prev => {
+-      const cleaned = (prev[weekIso] || []).filter(r => !editTs.includes(String(r.timestamp)));
+-      return { ...prev, [weekIso]: [...cleaned, ...all] };
+-    });
++  // Save from MultiSetModal under the NEW model:
++  //   edits    — [{ timestamp, fields }] for already-logged sets the user actually edited.
++  //              Patched IN PLACE via update endpoint (no delete+append race, no data loss).
++  //   pendings — [{ setIdx, fields }] for not-yet-logged sets the user typed values into.
++  //              Stashed in localStorage; consumed by the next [+] tap on the card.
++  //   The modal NEVER creates log rows. Card counter is the sole source of "done".
++  const saveMultipleSets = (edits = [], pendings = []) => {
++    const exId = multiSetExId;
++
++    // 1. Patch edited rows everywhere (cache + queue + server update queue).
++    for (const e of edits) applyEditOptimistic(e.timestamp, weekIso, e.fields);
++    if (edits.length) {
++      const editPatch = new Map(edits.map(e => [String(e.timestamp), e.fields]));
++      setLogsMap(prev => ({
++        ...prev,
++        [weekIso]: (prev[weekIso] || []).map(r => {
++          const patch = editPatch.get(String(r.timestamp));
++          return patch ? { ...r, ...patch } : r;
++        }),
++      }));
++    }
++
++    // 2. Stash pending values for future sets.
++    for (const p of pendings) setPending(exId, dateStr, p.setIdx, p.fields);
++
+     setMultiSetExId(null);
+-    commitSync();
++    if (edits.length) commitSync();
+   };
+ 
+   // Minus button: remove the last logged set for an exercise on the viewed day.
+-  // Removes from React state immediately; also cleans queue+cache for unsynced entries.
+-  // Already-synced entries reappear on the next server refresh (acceptable MVP trade-off).
++  // The card's invisible left-edge button + a long-press requirement guards against
++  // accidental taps. We ALSO stash the removed row + show an Undo snackbar so an
++  // accidental delete is recoverable for 5 seconds.
+   const removeLastSet = (exId) => {
+     const entries = dayLogs.filter(r => r.exercise_id === exId);
+     if (entries.length === 0) return;
+     const last = entries[entries.length - 1];
+     setLogsMap(prev => removeFromMap(prev, weekIso, last.timestamp));
+     removeOptimistic(last.timestamp, weekIso);
++    setUndoState({ kind: "set", exId, entry: last, timestamp: last.timestamp });
++    commitSync();
++  };
++
++  // Restore a just-removed set (Undo). Re-append it locally + on the server.
++  const undoRemoveLastSet = () => {
++    if (!undoState || undoState.kind !== "set") return;
++    const { entry } = undoState;
++    logSetOptimistic(entry);
++    setLogsMap(prev => addToMap(prev, weekIso, [entry]));
++    setUndoState(null);
+     commitSync();
+   };
+ 
+@@ -312,6 +344,7 @@ export default function App() {
+     const last = entries[entries.length - 1];
+     setLogsMap(prev => removeFromMap(prev, weekIso, last.timestamp));
+     removeOptimistic(last.timestamp, weekIso);
++    setUndoState({ kind: "set", exId: logId, entry: last, timestamp: last.timestamp });
+     commitSync();
+   };
+ 
+@@ -339,7 +372,7 @@ export default function App() {
+     commitSync();
+   };
+ 
+-  // Compute target + done for modal (relative to viewed day).
++  // Compute target + done + logged entries + pending typed-for-future for the modal.
+   const modalProps = useMemo(() => {
+     if (!multiSetExId || !schedule[day]) return null;
+     const isStrength = schedule[day].strength.includes(multiSetExId);
+@@ -347,23 +380,23 @@ export default function App() {
+       ? strengthTargetToday(multiSetExId, day, weekLogs)
+       : cardioTargetToday(multiSetExId, day);
+     const done = doneToday(multiSetExId, dateStr, dayLogs);
+-    // Actual logged rows (reps/load) for this exercise on the viewed day, in order —
+-    // so the modal shows what was really entered, refreshed from the server by loadWeek.
+     const entries = dayLogs.filter(r => r.exercise_id === multiSetExId);
+-    return { target, done, entries };
++    const pendings = listPending(multiSetExId, dateStr);
++    return { target, done, entries, pendings };
+   }, [multiSetExId, day, weekLogs, dayLogs, dateStr]);
+ 
+   // ── context ───────────────────────────────────────────────────────────────
+   const ctx = {
+     viewedDate, dateStr, day, weekIso,
+     weekLogs, dayLogs, loading,
+-    quickLog, removeLastSet,
++    quickLog, removeLastSet, undoRemoveLastSet,
+     openMultiSet: setMultiSetExId,
+     refresh,
+     goPrev, goNext, prevDisabled,
+     // Habits + Польза
+     logHabit, removeHabit,
+     polzaLog, logPolza,
++    openAddPolza: () => setAddPolzaOpen(true),
+     // Config refresh (pull plan/habits/polza from sheet) + Польза done-state
+     refreshConfig: refreshAll, configLoading, configError, lastSync,
+   };
+@@ -372,11 +405,36 @@ export default function App() {
+   // Habits/Польза only have TabBar.
+   const mainPb = activeTab === "sport" ? "pb-44" : "pb-20";
+ 
++  // ── horizontal swipe between days (mobile) ────────────────────────────────
++  // Triggers only on a strongly-horizontal gesture so vertical scrolling stays
++  // intact. Threshold tuned so accidental sub-50px drags don't change day.
++  const swipeStart = useRef(null);
++  const onContentTouchStart = (e) => {
++    const t = e.touches[0];
++    swipeStart.current = { x: t.clientX, y: t.clientY };
++  };
++  const onContentTouchEnd = (e) => {
++    const s = swipeStart.current;
++    if (!s) return;
++    swipeStart.current = null;
++    const t = e.changedTouches[0];
++    const dx = t.clientX - s.x;
++    const dy = Math.abs(t.clientY - s.y);
++    if (Math.abs(dx) < 60) return;
++    if (Math.abs(dx) <= dy * 1.3) return; // mostly vertical — let scroll win
++    if (dx < 0) goNext();                  // swipe left → next day
++    else if (!prevDisabled) goPrev();      // swipe right → previous day
++  };
++
+   return (
+     <DayContext.Provider value={ctx}>
+       <div className={`mx-auto max-w-[420px] min-h-full flex flex-col ${mainPb}`}>
+         <DayHeader />
+-        <main className="flex-1 px-4 py-3">
++        <main
++          className="flex-1 px-4 py-3"
++          onTouchStart={onContentTouchStart}
++          onTouchEnd={onContentTouchEnd}
++        >
+           {activeTab === "sport"  && <ExerciseList />}
+           {activeTab === "habits" && <HabitsView />}
+           {activeTab === "polza"  && <PolzaView />}
+@@ -394,12 +452,31 @@ export default function App() {
+           />
+         )}
+ 
++        {undoState && undoState.kind === "set" && (
++          <UndoSnackbar
++            message="Сет удалён"
++            onUndo={undoRemoveLastSet}
++            onDismiss={() => setUndoState(null)}
++          />
++        )}
++
++        {addPolzaOpen && (
++          <AddPolzaModal
++            onClose={() => setAddPolzaOpen(false)}
++            onSubmit={async (name) => {
++              await addPolzaTask(name);
++              await refreshConfig();   // pull new task from sheet
++            }}
++          />
++        )}
++
+         {multiSetExId && modalProps && (
+           <MultiSetModal
+             exercise={exerciseById[multiSetExId]}
+             target={modalProps.target}
+             done={modalProps.done}
+             loggedSets={modalProps.entries}
++            pendingSets={modalProps.pendings}
+             onClose={() => setMultiSetExId(null)}
+             onSave={saveMultipleSets}
+           />
+diff --git a/src/components/ExerciseCard.jsx b/src/components/ExerciseCard.jsx
+index 138c4d4..87dc3d1 100644
+--- a/src/components/ExerciseCard.jsx
++++ b/src/components/ExerciseCard.jsx
+@@ -1,6 +1,45 @@
++import { useRef } from "react";
+ import { useDay } from "../DayContext.jsx";
+ import { useConfig } from "../useConfig.js";
+ import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
++
++// Long-press threshold for the invisible left-edge MINUS — guards against accidental
++// taps which silently lose data on mobile.
++const LONG_PRESS_MS = 400;
++
++// Invisible left-edge target. Fires onTrigger only after a sustained press (mouse
++// or touch). Any movement cancels (so a scroll/swipe never triggers a delete).
++function LongPressDelete({ onTrigger, label }) {
++  const timerRef = useRef(null);
++  const startedAt = useRef(null);
++  const cancel = () => {
++    if (timerRef.current) clearTimeout(timerRef.current);
++    timerRef.current = null;
++    startedAt.current = null;
++  };
++  const arm = (e) => {
++    e.stopPropagation();
++    startedAt.current = Date.now();
++    timerRef.current = setTimeout(() => {
++      timerRef.current = null;
++      onTrigger();
++    }, LONG_PRESS_MS);
++  };
++  return (
++    <button
++      onMouseDown={arm}
++      onMouseUp={cancel}
++      onMouseLeave={cancel}
++      onTouchStart={arm}
++      onTouchEnd={cancel}
++      onTouchMove={cancel}
++      onTouchCancel={cancel}
++      onContextMenu={e => e.preventDefault()}
++      className="absolute left-0 top-0 h-full w-12 opacity-0 rounded-l-xl"
++      aria-label={label}
++    />
++  );
++}
+ import {
+   cardState,
+   cardioTargetToday,
+@@ -45,12 +84,7 @@ export default function ExerciseCard({ exId, kind }) {
+       className={`relative flex items-center gap-3 rounded-xl border bg-slate-900 px-3 py-3 cursor-pointer active:bg-slate-800 transition-opacity ${STATE_STYLES[state]}`}
+       onClick={() => openMultiSet(exId)}
+     >
+-      {/* Invisible [-] button: left edge, same footprint as [+]. Tap to undo last set. */}
+-      <button
+-        onClick={e => { e.stopPropagation(); removeLastSet(exId); }}
+-        className="absolute left-0 top-0 h-full w-12 opacity-0 rounded-l-xl"
+-        aria-label={`Удалить последний сет: ${ex.name}`}
+-      />
++      <LongPressDelete onTrigger={() => removeLastSet(exId)} label={`Удалить последний сет: ${ex.name}`} />
+       {/* Name + description */}
+       <div className="flex-1 min-w-0">
+         <div className="text-base font-medium truncate">{ex.name}</div>
+diff --git a/src/components/MultiSetModal.jsx b/src/components/MultiSetModal.jsx
+index 2c8e61c..f663da7 100644
+--- a/src/components/MultiSetModal.jsx
++++ b/src/components/MultiSetModal.jsx
+@@ -14,7 +14,6 @@ function blockDefault(ex) {
+       load: ex.defaultLoad !== null && ex.defaultLoad !== undefined ? String(ex.defaultLoad) : ""
+     };
+   }
+-  // CARDIO
+   const o = {};
+   for (const f of ex.cardioFields || []) {
+     o[f.key] = f.default !== null && f.default !== undefined ? String(f.default) : "";
+@@ -30,14 +29,12 @@ function blockFields(ex) {
+   if (ex.type === "ISO") return [
+     { key: "load",  label: "Удержание", unit: "sec",          inputMode: "numeric", type: "number" }
+   ];
+-  // CARDIO: text inputs so values like "8.12"/"8.20" are preserved EXACTLY
+-  // (m.ss interval time — seconds must not be rounded or lose trailing zeros).
+   return (ex.cardioFields || []).map(f => ({
+     key: f.key, label: f.label, unit: f.unit || "", inputMode: "decimal", type: "text"
+   }));
+ }
+ 
+-// Build block values from an actual logged row (real reps/load/cardio), not defaults.
++// Logged-row → block values.
+ function blockFromEntry(ex, entry) {
+   const s = (v) => (v === null || v === undefined || v === "") ? "" : String(v);
+   if (ex.type === "STR") return { reps: s(entry.reps), load: s(entry.load) };
+@@ -47,12 +44,11 @@ function blockFromEntry(ex, entry) {
+   return o;
+ }
+ 
++// Block values → Log row fields (the bits we write to the row).
+ function toEntryFields(ex, vals) {
+   const n = (v) => (v !== "" && v !== null && v !== undefined && !isNaN(+v)) ? +v : "";
+   if (ex.type === "STR") return { reps: n(vals.reps), load: n(vals.load), unit: ex.unit || "" };
+   if (ex.type === "ISO") return { reps: 1, load: n(vals.load), unit: "sec" };
+-  // CARDIO: keep the RAW string (no numeric coercion) so m.ss times like
+-  // "8.20" / "8.05" are stored exactly, seconds intact.
+   const out = {};
+   for (const f of ex.cardioFields || []) {
+     const v = vals[f.key];
+@@ -62,45 +58,62 @@ function toEntryFields(ex, vals) {
+ }
+ 
+ // ─── component ──────────────────────────────────────────────────────────────
+-
+-export default function MultiSetModal({ exercise, target, done, loggedSets = [], onClose, onSave }) {
+-  // Show at least every logged set (even if done > target, i.e. overlogged).
++//
++// loggedSets   — actual server rows for this exercise/day (editable).
++// pendingSets  — values typed earlier for not-yet-logged sets (by setIdx).
++// onSave(edits, pendings) — edits = [{timestamp,fields}] for changed logged rows;
++//                            pendings = [{setIdx,fields}] for typed future-set blocks.
++//                            Any close path (Done / ✕ / backdrop / swipe) calls this.
++
++export default function MultiSetModal({
++  exercise, target, done, loggedSets = [], pendingSets = [], onClose, onSave,
++}) {
+   const N = Math.max(target, done, 1);
+-  const remaining = Math.max(0, target - done);
++  const fields = blockFields(exercise);
+ 
+-  // Done blocks → REAL logged values (reps/load from server); the rest → defaults.
+-  const [sets, setSets] = useState(() =>
+-    Array.from({ length: N }, (_, i) =>
+-      i < loggedSets.length ? blockFromEntry(exercise, loggedSets[i]) : { ...blockDefault(exercise) }
+-    )
+-  );
++  // For block i: prefer the actual logged row, then any pending capture, then defaults.
++  const initialBlock = (i) => {
++    if (i < loggedSets.length) return blockFromEntry(exercise, loggedSets[i]);
++    const p = pendingSets.find(p => p.setIdx === i);
++    return p ? { ...p.fields } : { ...blockDefault(exercise) };
++  };
++  const [sets, setSets] = useState(() => Array.from({ length: N }, (_, i) => initialBlock(i)));
+ 
+-  const touchStartX = useRef(null);
+-  const touchStartY = useRef(null);
+-  const fields = blockFields(exercise);
++  // touched[i] = user actually typed in block i. We only persist touched blocks
++  // (untouched defaults must NOT be written anywhere — old auto-log bug fix).
++  const [touched, setTouched] = useState(() => Array(N).fill(false));
+ 
+-  const update = (i, key, val) =>
++  const update = (i, key, val) => {
+     setSets(prev => prev.map((s, idx) => idx === i ? { ...s, [key]: val } : s));
++    setTouched(prev => prev.map((t, idx) => idx === i ? true : t));
++  };
++
++  // Any close path: persist edits to logged rows + pendings to future-set rows.
++  const closingRef = useRef(false);
++  const persistAndClose = () => {
++    if (closingRef.current) return;
++    closingRef.current = true;
+ 
+-  // On OK: collect edits to already-logged sets (value changed vs server) AND
+-  // new sets to add. Edits replace the old row (delete + re-append) on the backend.
+-  const handleOK = () => {
+     const edits = [];
+-    for (let i = 0; i < loggedSets.length && i < sets.length; i++) {
+-      const orig = blockFromEntry(exercise, loggedSets[i]);
+-      const cur  = sets[i];
+-      const changed = fields.some(f => String(cur[f.key] ?? "") !== String(orig[f.key] ?? ""));
+-      if (changed) edits.push({ timestamp: loggedSets[i].timestamp, fields: toEntryFields(exercise, cur) });
++    const pendings = [];
++    for (let i = 0; i < sets.length; i++) {
++      if (!touched[i]) continue;
++      if (i < loggedSets.length) {
++        const orig = blockFromEntry(exercise, loggedSets[i]);
++        const changed = fields.some(f => String(sets[i][f.key] ?? "") !== String(orig[f.key] ?? ""));
++        if (changed) edits.push({ timestamp: loggedSets[i].timestamp, fields: toEntryFields(exercise, sets[i]) });
++      } else {
++        pendings.push({ setIdx: i, fields: toEntryFields(exercise, sets[i]) });
++      }
+     }
+-    const additions = Array.from({ length: remaining }, (_, i) => {
+-      const setIdx = Math.min(done + i, sets.length - 1);
+-      return toEntryFields(exercise, sets[setIdx]);
+-    });
+-    if (edits.length === 0 && additions.length === 0) { onClose(); return; }
+-    onSave(additions, edits);
++
++    if (edits.length === 0 && pendings.length === 0) { onClose(); return; }
++    onSave(edits, pendings);
+   };
+ 
+-  // Horizontal swipe (left or right) → close. Ignore vertical scrolling.
++  // Swipe-to-close (horizontal, with vertical threshold to not break scroll).
++  const touchStartX = useRef(null);
++  const touchStartY = useRef(null);
+   const onTouchStart = (e) => {
+     touchStartX.current = e.touches[0].clientX;
+     touchStartY.current = e.touches[0].clientY;
+@@ -109,17 +122,15 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
+     if (touchStartX.current === null) return;
+     const dx = e.changedTouches[0].clientX - touchStartX.current;
+     const dy = Math.abs(e.changedTouches[0].clientY - touchStartY.current);
+-    if (Math.abs(dx) > 70 && Math.abs(dx) > dy * 1.3) onClose();
++    if (Math.abs(dx) > 70 && Math.abs(dx) > dy * 1.3) persistAndClose();
+     touchStartX.current = null;
+     touchStartY.current = null;
+   };
+ 
+-  const okLabel = "Done";
+-
+   return (
+     <div
+       className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center"
+-      onClick={onClose}
++      onClick={persistAndClose}
+     >
+       <div
+         className="w-full max-w-[420px] bg-slate-900 border-t sm:border border-slate-800 rounded-t-2xl sm:rounded-2xl p-4 pb-6 flex flex-col gap-3 max-h-[90vh] overflow-y-auto"
+@@ -136,7 +147,7 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
+             )}
+           </div>
+           <button
+-            onClick={onClose}
++            onClick={persistAndClose}
+             className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full text-slate-400 active:bg-slate-800 text-lg"
+             aria-label="Закрыть"
+           >✕</button>
+@@ -145,19 +156,19 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
+         {/* Set blocks */}
+         <div className="flex flex-col gap-2">
+           {Array.from({ length: N }, (_, i) => {
+-            const isDone = i < done;
++            const isLogged = i < loggedSets.length;
+             return (
+               <div
+                 key={i}
+                 className={`rounded-xl border p-3 ${
+-                  isDone
++                  isLogged
+                     ? "border-emerald-700/30 bg-slate-800/30"
+                     : "border-slate-700 bg-slate-800"
+                 }`}
+               >
+                 <div className="flex items-center gap-2 mb-2">
+                   <span className="text-sm font-medium text-slate-300">Rep {i + 1}</span>
+-                  {isDone && (
++                  {isLogged && (
+                     <span className="text-emerald-400 text-xs font-medium">✓ выполнен</span>
+                   )}
+                 </div>
+@@ -185,10 +196,10 @@ export default function MultiSetModal({ exercise, target, done, loggedSets = [],
+         </div>
+ 
+         <button
+-          onClick={handleOK}
++          onClick={persistAndClose}
+           className="w-full h-12 rounded-xl bg-amber-500 text-slate-950 font-semibold active:bg-amber-400 mt-1"
+         >
+-          {okLabel}
++          Done
+         </button>
+       </div>
+     </div>
+diff --git a/src/components/PolzaView.jsx b/src/components/PolzaView.jsx
+index e30e74c..2fcf434 100644
+--- a/src/components/PolzaView.jsx
++++ b/src/components/PolzaView.jsx
+@@ -7,7 +7,7 @@ import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
+ //  - Past day view:        show ONLY items done on that exact day (history mode, no actives)
+ //  Items done on OTHER days don't show on today's view (they're archived lifetime).
+ export default function PolzaView() {
+-  const { dateStr, polzaLog, logPolza } = useDay();
++  const { dateStr, polzaLog, logPolza, openAddPolza } = useDay();
+   const { polza } = useConfig();
+ 
+   // ids done on the viewed day, and ids done ever (lifetime archive) — both from polzaLog
+@@ -62,6 +62,15 @@ export default function PolzaView() {
+           </button>
+         );
+       })}
++
++      {/* Add new task — only on today/future; past days are history-only. */}
++      {!isPast && (
++        <button
++          onClick={openAddPolza}
++          className="w-full h-12 mt-1 rounded-xl border border-dashed border-slate-700 text-slate-500 text-base font-medium active:bg-slate-800"
++          aria-label="Добавить дело"
++        >+ добавить</button>
++      )}
+     </div>
+   );
+ }
+diff --git a/src/data/configStore.js b/src/data/configStore.js
+index c82a1c7..19b8375 100644
+--- a/src/data/configStore.js
++++ b/src/data/configStore.js
+@@ -7,9 +7,12 @@
+ //   A module-level singleton lets pure functions read current config; the useConfig()
+ //   hook on top makes React components reactively re-render when config changes.
+ 
+-import { defaultConfig } from "../services/config.js";
++import { defaultConfig, getCachedConfig } from "../services/config.js";
+ 
+-let _state = defaultConfig();
++// Cache-first bootstrap: prefer the previous session's fetched config over
++// hardcoded defaults. Eliminates the brief "[0/2]" / wrong-plan flash on cold
++// load before the server fetch completes.
++let _state = getCachedConfig() || defaultConfig();
+ const _listeners = new Set();
+ 
+ export function getConfig() {
+diff --git a/src/services/cache.js b/src/services/cache.js
+index 852b1ac..288feb1 100644
+--- a/src/services/cache.js
++++ b/src/services/cache.js
+@@ -4,6 +4,7 @@ const K = {
+   logsWeek: (w) => `logs_week_${w}`,
+   queue: "write_queue",
+   deleteQueue: "delete_queue",
++  updateQueue: "update_queue",
+ };
+ 
+ export function getCachedWeekLogs(weekIso) {
+@@ -39,3 +40,20 @@ export function pushDeleteQueue(timestamp) {
+ export function setDeleteQueue(q) {
+   localStorage.setItem(K.deleteQueue, JSON.stringify(q));
+ }
++
++// Update queue: { timestamp, fields } records waiting to patch a Log row server-side.
++export function getUpdateQueue() {
++  try { return JSON.parse(localStorage.getItem(K.updateQueue)) || []; }
++  catch { return []; }
++}
++export function pushUpdateQueue(timestamp, fields) {
++  const q = getUpdateQueue();
++  // Coalesce: if a pending update for this timestamp exists, merge.
++  const ix = q.findIndex(u => String(u.timestamp) === String(timestamp));
++  if (ix >= 0) q[ix] = { timestamp: String(timestamp), fields: { ...q[ix].fields, ...fields } };
++  else q.push({ timestamp: String(timestamp), fields });
++  localStorage.setItem(K.updateQueue, JSON.stringify(q));
++}
++export function setUpdateQueue(q) {
++  localStorage.setItem(K.updateQueue, JSON.stringify(q));
++}
+diff --git a/src/services/sheets.js b/src/services/sheets.js
+index 0c421f9..b6308bb 100644
+--- a/src/services/sheets.js
++++ b/src/services/sheets.js
+@@ -53,3 +53,28 @@ export async function deleteLog(timestamp) {
+   if (!data.ok) throw new Error(data.error || "delete failed");
+   return true;
+ }
++
++// Patch named columns of the Log row with the given timestamp (in place — no
++// delete+append race).
++export async function updateLog(timestamp, fields) {
++  const res = await fetch(API_URL, {
++    method: "POST",
++    headers: { "Content-Type": "text/plain;charset=utf-8" },
++    body: JSON.stringify({ action: "update", timestamp, fields })
++  });
++  const data = await res.json();
++  if (!data.ok) throw new Error(data.error || "update failed");
++  return true;
++}
++
++// Append a new task to the Польза sheet tab. Backend derives the id.
++export async function addPolzaTask(name) {
++  const res = await fetch(API_URL, {
++    method: "POST",
++    headers: { "Content-Type": "text/plain;charset=utf-8" },
++    body: JSON.stringify({ action: "addPolza", name })
++  });
++  const data = await res.json();
++  if (!data.ok) throw new Error(data.error || "addPolza failed");
++  return { id: data.id, name: data.name };
++}
+diff --git a/src/services/sync.js b/src/services/sync.js
+index 391750a..3e1bcec 100644
+--- a/src/services/sync.js
++++ b/src/services/sync.js
+@@ -2,10 +2,11 @@
+ // Every mutation (append AND delete) is mirrored to the backend; deletes that can't
+ // reach the server right now sit in delete_queue and flush on the next drain.
+ 
+-import { appendLog, deleteLog, fetchWeekLogs } from "./sheets.js";
++import { appendLog, deleteLog, updateLog, fetchWeekLogs } from "./sheets.js";
+ import {
+   getQueue, setQueue, pushQueue,
+   getDeleteQueue, setDeleteQueue, pushDeleteQueue,
++  getUpdateQueue, setUpdateQueue, pushUpdateQueue,
+   getCachedWeekLogs, setCachedWeekLogs
+ } from "./cache.js";
+ 
+@@ -23,14 +24,14 @@ export function logSetOptimistic(entry) {
+ // Guard against concurrent drains (action + focus/online could race → double POST).
+ let _draining = false;
+ 
+-// Flush every queued write AND queued delete. Returns real outcome:
+-//   { appended, deleted, failed, ok } — ok=true only if nothing failed.
+-// A genuine server exchange happened iff (appended + deleted) > 0 && ok.
++// Flush queued writes, updates, and deletes. Returns real outcome:
++//   { appended, updated, deleted, failed, ok } — ok=true only if nothing failed.
++// A genuine server exchange happened iff (appended + updated + deleted) > 0 && ok.
+ export async function drainQueue() {
+-  if (_draining) return { appended: 0, deleted: 0, failed: 0, ok: true, skipped: true };
++  if (_draining) return { appended: 0, updated: 0, deleted: 0, failed: 0, ok: true, skipped: true };
+   _draining = true;
+   try {
+-    let appended = 0, deleted = 0, failed = 0;
++    let appended = 0, updated = 0, deleted = 0, failed = 0;
+ 
+     const q = getQueue();
+     const remaining = [];
+@@ -40,6 +41,16 @@ export async function drainQueue() {
+     }
+     setQueue(remaining);
+ 
++    // Updates BEFORE deletes — patching a soon-to-be-deleted row is harmless,
++    // but deleting before update would skip the patch silently.
++    const uq = getUpdateQueue();
++    const uRemaining = [];
++    for (const u of uq) {
++      try { await updateLog(u.timestamp, u.fields); updated++; }
++      catch { uRemaining.push(u); failed++; }
++    }
++    setUpdateQueue(uRemaining);
++
+     const dq = getDeleteQueue();
+     const dRemaining = [];
+     for (const ts of dq) {
+@@ -48,7 +59,7 @@ export async function drainQueue() {
+     }
+     setDeleteQueue(dRemaining);
+ 
+-    return { appended, deleted, failed, ok: failed === 0 };
++    return { appended, updated, deleted, failed, ok: failed === 0 };
+   } finally {
+     _draining = false;
+   }
+@@ -69,6 +80,31 @@ export function removeOptimistic(timestamp, weekIso) {
+   return { wasUnsynced };
+ }
+ 
++// Patch an existing log row in place (e.g. edit reps/load of an already-logged set).
++// Updates cache, in-flight queue entries (if any), and enqueues a server update.
++// CRITICAL: this REPLACES the old delete+append edit flow, which had a race where
++// a failed append + successful delete = silently lost row.
++export function applyEditOptimistic(timestamp, weekIso, fields) {
++  const ts = String(timestamp);
++
++  // Patch any still-queued append for this row.
++  const q = getQueue();
++  const wasUnsynced = q.some(e => String(e.timestamp) === ts);
++  if (wasUnsynced) {
++    setQueue(q.map(e => String(e.timestamp) === ts ? { ...e, ...fields } : e));
++  }
++
++  // Patch cache.
++  setCachedWeekLogs(
++    weekIso,
++    getCachedWeekLogs(weekIso).map(r => String(r.timestamp) === ts ? { ...r, ...fields } : r)
++  );
++
++  // If the row had already reached the server, queue a server-side patch.
++  if (!wasUnsynced) pushUpdateQueue(ts, fields);
++  return { wasUnsynced };
++}
++
+ // On open / week change: pull authoritative rows, merge unsynced queue on top (no dupes).
+ export async function loadWeek(weekIso) {
+   let rows;
