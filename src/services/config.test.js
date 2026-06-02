@@ -15,9 +15,12 @@ describe("buildPlanConfig", () => {
     expect(exerciseById.rdl_classic.defaultLoad).toBe(120);
   });
 
-  it("infers ISO type from Unit=seconds", () => {
+  it("infers ISO type from Unit=seconds; weight unit comes from Load unit", () => {
     expect(exerciseById.iso.type).toBe("ISO");
-    expect(exerciseById.iso.unit).toBe("sec");
+    // Weight unit (kg) — the hold-duration "sec" lives on the second modal field.
+    expect(exerciseById.iso.unit).toBe("kg");
+    expect(exerciseById.iso.defaultReps).toBe(45);  // hold duration
+    expect(exerciseById.iso.defaultLoad).toBe(40);  // weight
   });
 
   it("STR weight unit comes from 'Load unit' (kg), not the reps Unit", () => {

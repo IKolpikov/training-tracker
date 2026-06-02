@@ -73,12 +73,13 @@ export function buildPlanConfig(planRows) {
           description: r.notes || cardioBase.description || "",
         };
       } else {
-        // `unit` here is the WEIGHT unit shown in the modal (Вес). For STR it's the
-        // sheet's "Load unit" (kg); for ISO the hold is in seconds.
+        // `unit` here is the WEIGHT unit shown in the modal (Вес) — for BOTH STR
+        // and ISO it's the sheet's "Load unit" (kg). For ISO the hold-duration
+        // unit ("sec") is rendered separately on the second field.
         exById[id] = {
           id, name: r.name || id,
           type,
-          unit: type === "ISO" ? "sec" : (r.load_unit || "kg"),
+          unit: r.load_unit || "kg",
           defaultReps: r.reps,
           defaultLoad: r.load,
           setsPerSession: r.sets ?? 1,

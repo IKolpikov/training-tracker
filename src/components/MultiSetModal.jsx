@@ -2,33 +2,32 @@ import { useMemo, useRef, useState } from "react";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
+// STR and ISO share field shape: both have reps + load. Only the "reps" column
+// has different semantics — for STR it's number of reps, for ISO it's the hold
+// duration in seconds. Defaults come from the sheet's Reps / Load columns.
+const isRepsLoadType = (ex) => ex.type === "STR" || ex.type === "ISO";
+const str = (v) => (v === null || v === undefined || v === "") ? "" : String(v);
+
 function blockDefault(ex) {
-  if (ex.type === "STR") {
-    return {
-      reps: ex.defaultReps !== null && ex.defaultReps !== undefined ? String(ex.defaultReps) : "",
-      load: ex.defaultLoad !== null && ex.defaultLoad !== undefined ? String(ex.defaultLoad) : ""
-    };
+  if (isRepsLoadType(ex)) {
+    return { reps: str(ex.defaultReps), load: str(ex.defaultLoad) };
   }
-  if (ex.type === "ISO") {
-    return {
-      load: ex.defaultLoad !== null && ex.defaultLoad !== undefined ? String(ex.defaultLoad) : ""
-    };
-  }
+  // CARDIO
   const o = {};
-  for (const f of ex.cardioFields || []) {
-    o[f.key] = f.default !== null && f.default !== undefined ? String(f.default) : "";
-  }
+  for (const f of ex.cardioFields || []) o[f.key] = str(f.default);
   return o;
 }
 
 function blockFields(ex) {
-  if (ex.type === "STR") return [
-    { key: "load",  label: "Вес",      unit: ex.unit || "kg", inputMode: "decimal", type: "number" },
-    { key: "reps",  label: "Повторы",  unit: "reps",          inputMode: "numeric", type: "number" }
-  ];
-  if (ex.type === "ISO") return [
-    { key: "load",  label: "Удержание", unit: "sec",          inputMode: "numeric", type: "number" }
-  ];
+  if (isRepsLoadType(ex)) {
+    const isIso = ex.type === "ISO";
+    return [
+      { key: "load", label: "Вес",                          unit: ex.unit || "kg",     inputMode: "decimal", type: "number" },
+      { key: "reps", label: isIso ? "Удержание" : "Повторы", unit: isIso ? "sec" : "reps", inputMode: "numeric", type: "number" }
+    ];
+  }
+  // CARDIO: text inputs so values like "8.12"/"8.20" are preserved EXACTLY
+  // (m.ss interval time — seconds must not be rounded or lose trailing zeros).
   return (ex.cardioFields || []).map(f => ({
     key: f.key, label: f.label, unit: f.unit || "", inputMode: "decimal", type: "text"
   }));
@@ -36,19 +35,18 @@ function blockFields(ex) {
 
 // Logged-row → block values.
 function blockFromEntry(ex, entry) {
-  const s = (v) => (v === null || v === undefined || v === "") ? "" : String(v);
-  if (ex.type === "STR") return { reps: s(entry.reps), load: s(entry.load) };
-  if (ex.type === "ISO") return { load: s(entry.load) };
+  if (isRepsLoadType(ex)) return { reps: str(entry.reps), load: str(entry.load) };
   const o = {};
-  for (const f of ex.cardioFields || []) o[f.key] = s(entry[f.key]);
+  for (const f of ex.cardioFields || []) o[f.key] = str(entry[f.key]);
   return o;
 }
 
 // Block values → Log row fields (the bits we write to the row).
 function toEntryFields(ex, vals) {
   const n = (v) => (v !== "" && v !== null && v !== undefined && !isNaN(+v)) ? +v : "";
-  if (ex.type === "STR") return { reps: n(vals.reps), load: n(vals.load), unit: ex.unit || "" };
-  if (ex.type === "ISO") return { reps: 1, load: n(vals.load), unit: "sec" };
+  if (isRepsLoadType(ex)) return { reps: n(vals.reps), load: n(vals.load), unit: ex.unit || "kg" };
+  // CARDIO: keep the RAW string (no numeric coercion) so m.ss times like
+  // "8.20" / "8.05" are stored exactly, seconds intact.
   const out = {};
   for (const f of ex.cardioFields || []) {
     const v = vals[f.key];

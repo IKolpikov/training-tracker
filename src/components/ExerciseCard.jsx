@@ -7,19 +7,33 @@ import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
 // taps which silently lose data on mobile.
 const LONG_PRESS_MS = 400;
 
-// Invisible left-edge target. Fires onTrigger only after a sustained press (mouse
-// or touch). Any movement cancels (so a scroll/swipe never triggers a delete).
+// Invisible left-edge target. Fires onTrigger after a sustained press; only
+// distinguishes a steady hold from a scroll/swipe by a movement THRESHOLD
+// (>10px from the start point cancels). Cancelling on any micro-movement
+// made the long-press effectively impossible to land on mobile.
+const LONG_PRESS_PX = 10;
 function LongPressDelete({ onTrigger, label }) {
   const timer = useRef(null);
-  const cancel = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
+  const start = useRef(null);
+  const cancel = () => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    start.current = null;
+  };
   const arm = (e) => {
     e.stopPropagation();
-    timer.current = setTimeout(() => { timer.current = null; onTrigger(); }, LONG_PRESS_MS);
+    const t = e.touches ? e.touches[0] : e;
+    start.current = { x: t.clientX, y: t.clientY };
+    timer.current = setTimeout(() => { timer.current = null; start.current = null; onTrigger(); }, LONG_PRESS_MS);
+  };
+  const move = (e) => {
+    if (!start.current || !timer.current) return;
+    const t = e.touches ? e.touches[0] : e;
+    if (Math.hypot(t.clientX - start.current.x, t.clientY - start.current.y) > LONG_PRESS_PX) cancel();
   };
   return (
     <button
-      onMouseDown={arm}     onMouseUp={cancel}    onMouseLeave={cancel}
-      onTouchStart={arm}    onTouchEnd={cancel}   onTouchMove={cancel}   onTouchCancel={cancel}
+      onMouseDown={arm}     onMouseUp={cancel}    onMouseLeave={cancel}   onMouseMove={move}
+      onTouchStart={arm}    onTouchEnd={cancel}   onTouchMove={move}      onTouchCancel={cancel}
       onContextMenu={e => e.preventDefault()}
       className="absolute left-0 top-0 h-full w-12 opacity-0 rounded-l-xl"
       aria-label={label}

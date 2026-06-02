@@ -260,10 +260,10 @@ export default function App() {
     let fields = {};
     if (pending) {
       fields = pending;
-    } else if (ex.type === "STR") {
-      fields = { reps: ex.defaultReps ?? "", load: ex.defaultLoad ?? "", unit: ex.unit ?? "" };
-    } else if (ex.type === "ISO") {
-      fields = { reps: 1, load: ex.defaultLoad ?? "", unit: "sec" };
+    } else if (ex.type === "STR" || ex.type === "ISO") {
+      // Both share reps + load + unit; for ISO the "reps" value IS the hold
+      // duration in seconds (per sheet's Reps column).
+      fields = { reps: ex.defaultReps ?? "", load: ex.defaultLoad ?? "", unit: ex.unit ?? "kg" };
     } else {
       for (const f of ex.cardioFields || []) fields[f.key] = f.default ?? "";
     }
