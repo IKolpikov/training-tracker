@@ -24,16 +24,22 @@ export function logSetOptimistic(entry) {
 // Guard against concurrent drains (action + focus/online could race → double POST).
 let _draining = false;
 
-// Walk one queue serially; failed items stay for the next drain.
-async function flushQueue_(get, set, send) {
-  const q = get();
-  const remaining = [];
+// Walk one queue serially. Tracks SUCCEEDED keys, then re-reads the queue at
+// the end and removes only those — anything pushed DURING the await(s) stays.
+// Fixes the race where rapid taps were swallowed: drainQueue used to do
+//   q = get(); for (item of q) await send; set(remaining)
+// and the blind set() overwrote items added between read and finish.
+async function flushQueue_(get, set, send, keyOf) {
+  const snapshot = get();
+  const succeeded = new Set();
   let done = 0, failed = 0;
-  for (const item of q) {
-    try { await send(item); done++; }
-    catch { remaining.push(item); failed++; }
+  for (const item of snapshot) {
+    try { await send(item); done++; succeeded.add(keyOf(item)); }
+    catch { failed++; }
   }
-  set(remaining);
+  if (succeeded.size === 0) return { done, failed };
+  // Re-read: items pushed during drain are now in here too.
+  set(get().filter(item => !succeeded.has(keyOf(item))));
   return { done, failed };
 }
 
@@ -45,15 +51,25 @@ async function flushQueue_(get, set, send) {
 export async function drainQueue() {
   if (_draining) return { appended: 0, updated: 0, deleted: 0, failed: 0, ok: true, skipped: true };
   _draining = true;
+  let result;
   try {
-    const a = await flushQueue_(getQueue,       setQueue,       appendLog);
-    const u = await flushQueue_(getUpdateQueue, setUpdateQueue, (i) => updateLog(i.timestamp, i.fields));
-    const d = await flushQueue_(getDeleteQueue, setDeleteQueue, deleteLog);
+    const a = await flushQueue_(getQueue,       setQueue,       appendLog,                              e => String(e.timestamp));
+    const u = await flushQueue_(getUpdateQueue, setUpdateQueue, (i) => updateLog(i.timestamp, i.fields), i => String(i.timestamp));
+    const d = await flushQueue_(getDeleteQueue, setDeleteQueue, deleteLog,                              ts => String(ts));
     const failed = a.failed + u.failed + d.failed;
-    return { appended: a.done, updated: u.done, deleted: d.done, failed, ok: failed === 0 };
+    result = { appended: a.done, updated: u.done, deleted: d.done, failed, ok: failed === 0 };
   } finally {
     _draining = false;
   }
+  // If items piled up during the drain (rapid taps) AND we made progress this
+  // round, kick another drain. Without this the second entry sits until the
+  // next user action; that's how "logged 2, only 1 reached server" happened.
+  // Bail when nothing succeeded (offline) so failures don't loop.
+  const pending = getQueue().length + getUpdateQueue().length + getDeleteQueue().length;
+  if (pending > 0 && (result.appended + result.updated + result.deleted) > 0) {
+    Promise.resolve().then(() => drainQueue()).catch(() => {});
+  }
+  return result;
 }
 
 // Remove one entry everywhere: local cache + write queue, and the SERVER.
