@@ -13,7 +13,8 @@ import {
 import { getCachedWeekLogs } from "./services/cache.js";
 import { fetchConfig, getCachedConfig, setCachedConfig } from "./services/config.js";
 import { fetchAllLogs, addPolzaTask } from "./services/sheets.js";
-import { setConfig as setConfigStore } from "./data/configStore.js";
+import { setConfig as setConfigStore, getConfig as getConfigStore } from "./data/configStore.js";
+import { slugify } from "./utils/slug.js";
 import { useConfig } from "./useConfig.js";
 import {
   cardioTargetToday,
@@ -455,9 +456,23 @@ export default function App() {
         {addPolzaOpen && (
           <AddPolzaModal
             onClose={() => setAddPolzaOpen(false)}
-            onSubmit={async (name) => {
-              await addPolzaTask(name);
-              await refreshConfig();   // pull new task from sheet
+            onSubmit={(name) => {
+              // Optimistic: add to the live config so the new item appears in the
+              // list the moment the modal closes. id matches what the backend will
+              // derive (frontend slugify mirrors backend slugify_).
+              const id  = slugify(name);
+              const cur = getConfigStore();
+              if (!cur.polzaById[id]) {
+                const next = {
+                  ...cur,
+                  polza:     [...cur.polza,     { id, name }],
+                  polzaById: { ...cur.polzaById, [id]: { id, name } },
+                };
+                setConfigStore(next);
+                setCachedConfig(next);
+              }
+              // Background sync. refreshConfig reconciles against the server.
+              addPolzaTask(name).then(() => refreshConfig()).catch(() => {});
             }}
           />
         )}

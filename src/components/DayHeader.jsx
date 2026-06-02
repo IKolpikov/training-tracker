@@ -1,9 +1,21 @@
 import { useDay } from "../DayContext.jsx";
 import { headerLabel } from "../utils/date.js";
 
+// Each day's headline cardio session — shown under the date so the day's focus
+// is glanceable. Hardcoded since these change with the training block, not weekly.
+const DAY_THEME = {
+  "Пн": "Велосипед Z2",
+  "Вт": "Силовая (Hamstring)",
+  "Ср": "Темповая тренировка",
+  "Чт": "Длительный бег Z2",
+  "Пт": "Силовая (Glute/Core)",
+  "Сб": "Восстановительный бег",
+  "Вс": "VO₂max интервалы",
+};
+
 export default function DayHeader() {
   const {
-    viewedDate, goPrev, goNext, prevDisabled,
+    viewedDate, day, goPrev, goNext, prevDisabled,
     refreshConfig, configLoading, configError, lastSync,
   } = useDay();
 
@@ -27,6 +39,7 @@ export default function DayHeader() {
           aria-label="Предыдущий день"
         >‹</button>
 
+        <div className="flex flex-col items-center min-w-0">
         <h1 className="text-lg font-medium tracking-tight flex items-center gap-2">
           {headerLabel(viewedDate)}
           {/* Refresh: pulls Week Plan / Habbits / Польза from the sheet. */}
@@ -47,6 +60,12 @@ export default function DayHeader() {
             title={dot.label}
           />
         </h1>
+        {DAY_THEME[day] && (
+          <div className="text-[11px] text-slate-500 leading-none mt-0.5 truncate max-w-full px-2">
+            {DAY_THEME[day]}
+          </div>
+        )}
+        </div>
 
         <button
           onClick={goNext}

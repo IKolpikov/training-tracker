@@ -13,10 +13,6 @@ export default function ExerciseList() {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-xs uppercase tracking-wider text-slate-500 px-1 mb-1">
-        {plan.circuitLabel}
-      </div>
-
       {plan.strength.map(exId => (
         <ExerciseCard key={exId} exId={exId} kind="strength" />
       ))}
