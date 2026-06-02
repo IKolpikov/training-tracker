@@ -331,13 +331,21 @@ function getPolza_() {
 //   - { action: "delete", timestamp }                       → remove matching Log rows
 //   - { action: "update", timestamp, fields:{header: val} } → patch matching row(s) in place
 //   - { action: "addPolza", name }                          → append a new task to Польза tab
+//   - { action: "cleanupEmpty" }                            → wipe all-empty Log rows (one-off)
 //   - otherwise a single Log entry (object keyed by HEADERS) → append one row to Log
 function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
-    if (body && body.action === "delete")   return deleteLogRows_(body.timestamp);
-    if (body && body.action === "update")   return updateLogRow_(body.timestamp, body.fields);
-    if (body && body.action === "addPolza") return addPolzaItem_(body.name);
+    if (body && body.action === "delete")       return deleteLogRows_(body.timestamp);
+    if (body && body.action === "update")       return updateLogRow_(body.timestamp, body.fields);
+    if (body && body.action === "addPolza")     return addPolzaItem_(body.name);
+    if (body && body.action === "cleanupEmpty") return cleanupEmptyRows_();
+
+    // Append. Refuse rows missing the two identity fields — these are how
+    // 55 phantom-empty rows accumulated in the past.
+    if (!body || !s_(body.timestamp) || !s_(body.exercise_id)) {
+      return json_({ ok: false, error: "append: timestamp + exercise_id required" });
+    }
 
     const sh  = getLogSheet_();
     const row = HEADERS.map(h => (body[h] !== undefined && body[h] !== null) ? body[h] : "");
@@ -377,6 +385,19 @@ function updateLogRow_(timestamp, fields) {
     });
   });
   return json_({ ok: true, updated: rows.length });
+}
+
+// Delete every Log row where ALL cells are empty — one-off cleanup of the 55
+// phantom rows that accumulated before the empty-body guard was added.
+function cleanupEmptyRows_() {
+  const sh = getLogSheet_();
+  const values = sh.getDataRange().getValues();
+  const empties = [];
+  for (let r = 1; r < values.length; r++) {
+    if (values[r].every(c => c === "" || c === null)) empties.push(r + 1);
+  }
+  empties.sort((a, b) => b - a).forEach(r => sh.deleteRow(r));
+  return json_({ ok: true, deleted: empties.length });
 }
 
 // Append a new task to the Польза tab. id derives from name (canonical map → slug).

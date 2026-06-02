@@ -28,8 +28,15 @@ export const fetchPlanRows   = ()        => getAction_("plan",   "plan").then(d 
 export const fetchHabitsRows = ()        => getAction_("habits", "habits").then(d => d.rows);
 export const fetchPolzaRows  = ()        => getAction_("polza",  "polza").then(d => d.rows);
 
-// entry: object keyed by Log headers (timestamp, date, week_iso, day, exercise_id, ...)
-export const appendLog = (entry)          => postAction_(entry, "append").then(() => true);
+// entry: object keyed by Log headers. Refuse to POST anything that lacks the
+// two identity fields — eliminates the source of garbage "all-empty" rows on
+// the server (55 such rows surfaced in past investigation).
+export const appendLog = (entry) => {
+  if (!entry || !entry.timestamp || !entry.exercise_id) {
+    return Promise.reject(new Error("appendLog: refusing empty/incomplete entry"));
+  }
+  return postAction_(entry, "append").then(() => true);
+};
 export const deleteLog = (timestamp)      => postAction_({ action: "delete", timestamp }, "delete").then(() => true);
 export const updateLog = (timestamp, f)   => postAction_({ action: "update", timestamp, fields: f }, "update").then(() => true);
 export const addPolzaTask = (name)        => postAction_({ action: "addPolza", name }, "addPolza").then(d => ({ id: d.id, name: d.name }));

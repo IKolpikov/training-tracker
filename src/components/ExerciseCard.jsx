@@ -1,40 +1,14 @@
-import { useRef } from "react";
 import { useDay } from "../DayContext.jsx";
 import { useConfig } from "../useConfig.js";
 import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
 
-// Long-press threshold for the invisible left-edge MINUS — guards against accidental
-// taps which silently lose data on mobile.
-const LONG_PRESS_MS = 400;
-
-// Invisible left-edge target. Fires onTrigger after a sustained press; only
-// distinguishes a steady hold from a scroll/swipe by a movement THRESHOLD
-// (>10px from the start point cancels). Cancelling on any micro-movement
-// made the long-press effectively impossible to land on mobile.
-const LONG_PRESS_PX = 10;
-function LongPressDelete({ onTrigger, label }) {
-  const timer = useRef(null);
-  const start = useRef(null);
-  const cancel = () => {
-    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    start.current = null;
-  };
-  const arm = (e) => {
-    e.stopPropagation();
-    const t = e.touches ? e.touches[0] : e;
-    start.current = { x: t.clientX, y: t.clientY };
-    timer.current = setTimeout(() => { timer.current = null; start.current = null; onTrigger(); }, LONG_PRESS_MS);
-  };
-  const move = (e) => {
-    if (!start.current || !timer.current) return;
-    const t = e.touches ? e.touches[0] : e;
-    if (Math.hypot(t.clientX - start.current.x, t.clientY - start.current.y) > LONG_PRESS_PX) cancel();
-  };
+// Invisible left-edge target — single tap fires onTrigger, symmetric to the
+// visible [+] on the right. Accidental taps are recoverable via the 5-second
+// undo snackbar shown by App on every removeLastSet.
+function MinusTapArea({ onTrigger, label }) {
   return (
     <button
-      onMouseDown={arm}     onMouseUp={cancel}    onMouseLeave={cancel}   onMouseMove={move}
-      onTouchStart={arm}    onTouchEnd={cancel}   onTouchMove={move}      onTouchCancel={cancel}
-      onContextMenu={e => e.preventDefault()}
+      onClick={e => { e.stopPropagation(); onTrigger(); }}
       className="absolute left-0 top-0 h-full w-12 opacity-0 rounded-l-xl"
       aria-label={label}
     />
@@ -84,7 +58,7 @@ export default function ExerciseCard({ exId, kind }) {
       className={`relative flex items-center gap-3 rounded-xl border bg-slate-900 px-3 py-3 cursor-pointer active:bg-slate-800 transition-opacity ${STATE_STYLES[state]}`}
       onClick={() => openMultiSet(exId)}
     >
-      <LongPressDelete onTrigger={() => removeLastSet(exId)} label={`Удалить последний сет: ${ex.name}`} />
+      <MinusTapArea onTrigger={() => removeLastSet(exId)} label={`Удалить последний сет: ${ex.name}`} />
       {/* Name + description */}
       <div className="flex-1 min-w-0">
         <div className="text-base font-medium truncate">{ex.name}</div>
