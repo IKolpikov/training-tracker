@@ -144,6 +144,21 @@ describe("cardioTargetToday — static, no carry", () => {
   });
 });
 
+describe("каждая неделя — чистый лист (никакого долга через границу недели)", () => {
+  // weekLogs is the SOLE input — strengthTargetToday physically can't see logs
+  // from any other week. This test pins the contract: passing an empty
+  // current-week log produces base targets, regardless of how badly the user
+  // missed sessions in any prior week (those rows simply aren't in weekLogs).
+  it("Понедельник (первый scheduled день) = base, что бы ни было раньше", () => {
+    expect(strengthTargetToday("rdl_classic", "Пн", [], "Пн")).toBe(2);
+    expect(strengthTargetToday("iso", "Пн", [], "Пн")).toBe(2);
+    expect(strengthTargetToday("bulgarian", "Пн", [], "Пн")).toBe(1);
+  });
+  it("cardio target всегда setsPerSession независимо от логов", () => {
+    expect(cardioTargetToday("tempo", "Ср")).toBe(2);
+  });
+});
+
 describe("cardState", () => {
   it("target 0 → complete (surplus absorbed)", () => {
     expect(cardState(0, 0)).toBe("complete");
