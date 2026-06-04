@@ -32,10 +32,16 @@ export function getWeekNumber(date = logicalNow()) {
   return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 }
 
-// For Log column A: REAL timestamp, millisecond precision so each set row is unique
-// (used as the delete/dedup key). "YYYY-MM-DDTHH:mm:ss.SSS".
+// For Log column A: REAL timestamp, ms precision, **strictly monotonic per device**.
+// Two calls in the same ms (or with a back-edged Date.now from NTP) get bumped to
+// last + 1ms so timestamps are guaranteed unique → no dedup collisions in loadWeek,
+// no orphaned rows on the server. Format: "YYYY-MM-DDTHH:mm:ss.SSS".
+let _lastMs = 0;
 export function realTimestamp(now = new Date()) {
-  return now.toISOString().slice(0, 23);
+  let t = now.getTime();
+  if (t <= _lastMs) t = _lastMs + 1;
+  _lastMs = t;
+  return new Date(t).toISOString().slice(0, 23);
 }
 
 // Human header label, e.g. "Пн, 25 мая"
