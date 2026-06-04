@@ -1,0 +1,18 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Training Tracker">
+  <rect width="512" height="512" fill="#ffffff"/>
+  <!-- Head -->
+  <circle cx="312" cy="118" r="44" fill="#0f172a"/>
+  <!-- Body + limbs, single weight, rounded line caps -->
+  <g fill="none" stroke="#0f172a" stroke-width="38" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Torso, slight forward lean -->
+    <path d="M 298 178 L 258 304"/>
+    <!-- Back arm swinging down + behind -->
+    <path d="M 286 222 L 224 254 L 198 314"/>
+    <!-- Front arm pumping forward + up -->
+    <path d="M 286 222 L 348 232 L 372 168"/>
+    <!-- Back leg extended back (push-off) -->
+    <path d="M 258 304 L 190 348 L 152 420"/>
+    <!-- Front leg lifted forward (knee high) -->
+    <path d="M 258 304 L 330 348 L 360 420"/>
+  </g>
+</svg>
