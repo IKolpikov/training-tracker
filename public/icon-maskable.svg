@@ -1,0 +1,15 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Training Tracker (maskable)">
+  <!-- Full-bleed white so Android adaptive masks (circle / squircle) crop a white edge, not transparency. -->
+  <rect width="512" height="512" fill="#ffffff"/>
+  <!-- Figure scaled to the maskable safe zone: centred, ~80% of canvas. Outer ~10% can be clipped on any device shape. -->
+  <g transform="translate(56 56) scale(0.78)">
+    <ellipse cx="382" cy="102" rx="38" ry="46" fill="#000000" transform="rotate(14 382 102)"/>
+    <g stroke="#000000" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M 345 198 Q 235 158 80 252"/>
+      <path d="M 358 180 Q 330 252 290 322"/>
+      <path d="M 350 200 Q 408 258 355 350"/>
+      <path d="M 290 322 Q 218 378 372 432"/>
+      <path d="M 290 322 Q 282 412 132 470"/>
+    </g>
+  </g>
+</svg>
