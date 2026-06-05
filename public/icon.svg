@@ -1,18 +1,18 @@
 <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Training Tracker">
   <rect width="512" height="512" fill="#ffffff"/>
-  <!-- Head -->
-  <circle cx="312" cy="118" r="44" fill="#0f172a"/>
-  <!-- Body + limbs, single weight, rounded line caps -->
-  <g fill="none" stroke="#0f172a" stroke-width="38" stroke-linecap="round" stroke-linejoin="round">
-    <!-- Torso, slight forward lean -->
-    <path d="M 298 178 L 258 304"/>
-    <!-- Back arm swinging down + behind -->
-    <path d="M 286 222 L 224 254 L 198 314"/>
-    <!-- Front arm pumping forward + up -->
-    <path d="M 286 222 L 348 232 L 372 168"/>
-    <!-- Back leg extended back (push-off) -->
-    <path d="M 258 304 L 190 348 L 152 420"/>
-    <!-- Front leg lifted forward (knee high) -->
-    <path d="M 258 304 L 330 348 L 360 420"/>
+  <!-- Head — solid oval, slightly tilted forward -->
+  <ellipse cx="382" cy="102" rx="38" ry="46" fill="#000000" transform="rotate(14 382 102)"/>
+  <!-- Limbs + torso as bold flowing curves -->
+  <g stroke="#000000" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Back arm: huge sweeping arc up and back to the left (the signature line) -->
+    <path d="M 345 198 Q 235 158 80 252"/>
+    <!-- Torso: lean from shoulder down to hip -->
+    <path d="M 358 180 Q 330 252 290 322"/>
+    <!-- Front arm: bent forward at the elbow -->
+    <path d="M 350 200 Q 408 258 355 350"/>
+    <!-- Front leg: lifted, knee high, foot punching forward -->
+    <path d="M 290 322 Q 218 378 372 432"/>
+    <!-- Back leg: extended back, push-off behind -->
+    <path d="M 290 322 Q 282 412 132 470"/>
   </g>
 </svg>

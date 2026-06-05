@@ -43,6 +43,28 @@ import UndoSnackbar from "./components/UndoSnackbar.jsx";
 // Earliest date user can navigate to. History starts here.
 const HISTORY_START = "2026-05-25";
 
+// localStorage key for last-viewed day restoration.
+// Tap-into-app should land on the day the user last interacted with, but only
+// within the same logical day (after 04:00 rollover → reset to today).
+const VIEWED_DATE_KEY = "viewed_date_v1";
+
+function restoreViewedDate() {
+  try {
+    const raw = localStorage.getItem(VIEWED_DATE_KEY);
+    if (!raw) return null;
+    const { viewed, savedAt } = JSON.parse(raw);
+    if (!viewed || !savedAt) return null;
+    const todayLogicalDay = toDateStr(logicalNow());
+    const savedLogicalDay = toDateStr(logicalNow(new Date(savedAt)));
+    // New logical day since last visit → start fresh on today.
+    if (savedLogicalDay !== todayLogicalDay) return null;
+    const d = new Date(viewed);
+    if (Number.isNaN(d.getTime())) return null;
+    if (toDateStr(d) < HISTORY_START) return null;
+    return d;
+  } catch { return null; }
+}
+
 export default function App() {
   // Live config from store (plan/schedule/habits/polza). Sheet is source of truth;
   // defaults seed bootstrap before fetch returns.
@@ -52,7 +74,20 @@ export default function App() {
   // Persistent backend-connection status: null (never) | {ok:true} | {ok:false, error}
   const [lastSync,      setLastSync]      = useState(null);
 
-  const [viewedDate, setViewedDate] = useState(() => logicalNow());
+  // Lazy init: if we have a saved viewed-date from the same logical day, restore
+  // it so reopening the app within the day lands back where the user left off.
+  const [viewedDate, setViewedDate] = useState(() => restoreViewedDate() || logicalNow());
+
+  // Persist viewed-date on every change. restoreViewedDate() decides on next boot
+  // whether the saved value is still relevant (same logical day) or stale.
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEWED_DATE_KEY, JSON.stringify({
+        viewed:  viewedDate.toISOString(),
+        savedAt: new Date().toISOString(),
+      }));
+    } catch { /* quota / disabled storage — non-fatal */ }
+  }, [viewedDate]);
 
   // ── logsMap: { [weekIso]: Log[] } ────────────────────────────────────────
   // Keeps data for every week we've visited in memory.
