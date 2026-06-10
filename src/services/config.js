@@ -58,10 +58,15 @@ export function buildPlanConfig(planRows) {
       if (type === "CARDIO") {
         const cardioBase = CARDIO_DEFAULTS_BY_ID[id] || {};
         const baseFields = CARDIO_FIELDS_BY_ID[id] || [];
-        // Override cardioField defaults from sheet: Reps → field[0], Load → field[1].
-        const fields = baseFields.map((f, i) => {
-          if (i === 0 && r.reps !== null) return { ...f, default: r.reps };
-          if (i === 1 && r.load !== null) return { ...f, default: r.load };
+        // Override defaults from sheet by EXPLICIT mapping (cardioField.sheetField):
+        //   "load" → Sheet's Load column  (дистанция в км)
+        //   "reps" → Sheet's Reps column  (время в минутах)
+        // Без sheetField — hardcoded default. Это закрывает баг swap distance↔time:
+        // раньше маппинг был по индексу [0]/[1], а в Sheet порядок другой
+        // (Reps=время, Load=дистанция).
+        const fields = baseFields.map((f) => {
+          if (f.sheetField === "load" && r.load !== null) return { ...f, default: r.load };
+          if (f.sheetField === "reps" && r.reps !== null) return { ...f, default: r.reps };
           return f;
         });
         exById[id] = {

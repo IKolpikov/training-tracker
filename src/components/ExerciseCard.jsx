@@ -3,8 +3,7 @@ import { useConfig } from "../useConfig.js";
 import { dateStr as toDateStr, logicalNow } from "../utils/date.js";
 
 // Invisible left-edge target — single tap fires onTrigger, symmetric to the
-// visible [+] on the right. Accidental taps are recoverable via the 5-second
-// undo snackbar shown by App on every removeLastSet.
+// visible [+] on the right.
 function MinusTapArea({ onTrigger, label }) {
   return (
     <button

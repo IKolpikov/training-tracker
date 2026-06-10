@@ -38,7 +38,6 @@ import TabBar from "./components/TabBar.jsx";
 import HabitsView from "./components/HabitsView.jsx";
 import PolzaView from "./components/PolzaView.jsx";
 import AddPolzaModal from "./components/AddPolzaModal.jsx";
-import UndoSnackbar from "./components/UndoSnackbar.jsx";
 
 // Earliest date user can navigate to. History starts here.
 const HISTORY_START = "2026-05-25";
@@ -111,9 +110,6 @@ export default function App() {
   // not from device-local storage. Optimistic entries added on tap, reconciled
   // on every refresh from the Log tab.
   const [polzaLog, setPolzaLog] = useState([]);
-
-  // Undo snackbar state: { kind: "polza", id, timestamp } | null
-  const [undoState, setUndoState] = useState(null);
 
   const dateStr = useMemo(() => toDateStr(viewedDate),     [viewedDate]);
   const day     = useMemo(() => getRussianDay(viewedDate), [viewedDate]);
@@ -340,26 +336,13 @@ export default function App() {
   };
 
   // Minus button: remove the last logged set for an exercise on the viewed day.
-  // The card's invisible left-edge button + a long-press requirement guards against
-  // accidental taps. We ALSO stash the removed row + show an Undo snackbar so an
-  // accidental delete is recoverable for 5 seconds.
+  // The card's invisible left-edge button — single tap, immediate, no confirmation.
   const removeLastSet = (exId) => {
     const entries = dayLogs.filter(r => r.exercise_id === exId);
     if (entries.length === 0) return;
     const last = entries[entries.length - 1];
     setLogsMap(prev => removeFromMap(prev, weekIso, last.timestamp));
     removeOptimistic(last.timestamp, weekIso);
-    setUndoState({ kind: "set", exId, entry: last, timestamp: last.timestamp });
-    commitSync();
-  };
-
-  // Restore a just-removed set (Undo). Re-append it locally + on the server.
-  const undoRemoveLastSet = () => {
-    if (!undoState || undoState.kind !== "set") return;
-    const { entry } = undoState;
-    logSetOptimistic(entry);
-    setLogsMap(prev => addToMap(prev, weekIso, [entry]));
-    setUndoState(null);
     commitSync();
   };
 
@@ -386,17 +369,6 @@ export default function App() {
     logSetOptimistic(entry);
     setLogsMap(prev => addToMap(prev, weekIso, [entry]));
     setPolzaLog(prev => [...prev, { id, date: dateStr, timestamp: String(entry.timestamp) }]);
-    setUndoState({ kind: "polza", id, timestamp: entry.timestamp });
-    commitSync();
-  };
-
-  const undoPolza = () => {
-    if (!undoState || undoState.kind !== "polza") return;
-    const { timestamp } = undoState;
-    setLogsMap(prev => removeFromMap(prev, weekIso, timestamp));
-    removeOptimistic(timestamp, weekIso);
-    setPolzaLog(prev => prev.filter(e => e.timestamp !== String(timestamp)));
-    setUndoState(null);
     commitSync();
   };
 
@@ -417,7 +389,7 @@ export default function App() {
   const ctx = {
     viewedDate, dateStr, day, weekIso,
     weekLogs, dayLogs, loading,
-    quickLog, removeLastSet, undoRemoveLastSet,
+    quickLog, removeLastSet,
     openMultiSet: setMultiSetExId,
     refresh,
     goPrev, goNext, prevDisabled,
@@ -471,22 +443,6 @@ export default function App() {
         {activeTab === "sport" && <ProgressBar />}
 
         <TabBar active={activeTab} onChange={setActiveTab} />
-
-        {undoState && undoState.kind === "polza" && (
-          <UndoSnackbar
-            message={`Готово: ${polzaById[undoState.id]?.name || ""}`}
-            onUndo={undoPolza}
-            onDismiss={() => setUndoState(null)}
-          />
-        )}
-
-        {undoState && undoState.kind === "set" && (
-          <UndoSnackbar
-            message="Сет удалён"
-            onUndo={undoRemoveLastSet}
-            onDismiss={() => setUndoState(null)}
-          />
-        )}
 
         {addPolzaOpen && (
           <AddPolzaModal

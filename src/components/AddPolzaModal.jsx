@@ -27,9 +27,19 @@ export default function AddPolzaModal({ onClose, onSubmit }) {
       >
         <div className="text-lg font-semibold">Новое дело</div>
 
+        {/*
+          type="search" — самый надёжный способ убрать Chrome Autofill bar
+          (🔑/💳/📍) на Android: для search-инпутов Chrome не подсовывает password
+          и payment-предложения. На вид — обычный текстовый инпут (стилизация наша
+          поверх), но без autofill chrome.
+          data-* / autoComplete — страховка для менеджеров паролей (1P/LP/BW).
+        */}
         <input
           ref={inputRef}
-          type="text"
+          type="search"
+          enterKeyHint="done"
+          inputMode="text"
+          name="task-name"
           value={name}
           onChange={e => setName(e.target.value)}
           placeholder="Что нужно сделать?"
@@ -37,7 +47,11 @@ export default function AddPolzaModal({ onClose, onSubmit }) {
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
-          className="h-12 px-3 rounded-lg bg-slate-800 border border-slate-700 text-base outline-none focus:border-amber-500"
+          data-form-type="other"
+          data-lpignore="true"
+          data-1p-ignore="true"
+          data-bwignore="true"
+          className="h-12 px-3 rounded-lg bg-slate-800 border border-slate-700 text-base outline-none focus:border-amber-500 appearance-none [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
           onKeyDown={e => { if (e.key === "Enter") submit(); }}
         />
 

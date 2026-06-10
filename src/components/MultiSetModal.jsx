@@ -178,6 +178,16 @@ export default function MultiSetModal({
                         type={f.type || "number"}
                         inputMode={f.inputMode}
                         step="any"
+                        name={`set-${i}-${f.key}`}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        data-form-type="other"
+                        data-lpignore="true"
+                        data-1p-ignore="true"
+                        data-bwignore="true"
+                        enterKeyHint="done"
                         value={sets[i]?.[f.key] ?? ""}
                         onChange={e => update(i, f.key, e.target.value)}
                         className="h-11 px-3 rounded-lg bg-slate-900 border border-slate-700 text-base outline-none focus:border-amber-500 w-full"

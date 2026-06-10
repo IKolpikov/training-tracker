@@ -18,20 +18,25 @@ export const exercises = [
 
   // ---- CARDIO ----
   // cardioFields: { key -> Log column, label, unit, default }. Modal renders one input per field.
+  // sheetField — какую колонку Week Plan брать для default'а:
+  //   "load" — дистанция в км (Sheet: Load + Load unit=km)
+  //   "reps" — время в минутах (Sheet: Reps + Unit=minutes)
+  //   отсутствие sheetField — hardcoded default не переопределяется (например
+  //   intervals: «дистанция повтора» ≠ Sheet.Load=общая дистанция).
   { id: "z2_run",   name: "Z2 run",      type: "CARDIO", setsPerSession: 1, description: "135–150 HR easy run",
     cardioFields: [
-      { key: "distance_km",  label: "Дистанция", unit: "km",  default: 11 },
-      { key: "duration_min", label: "Время",     unit: "min", default: 60 }
+      { key: "distance_km",  label: "Дистанция", unit: "km",  default: 11, sheetField: "load" },
+      { key: "duration_min", label: "Время",     unit: "min", default: 60, sheetField: "reps" }
     ] },
   { id: "long_z2",  name: "Long Z2 run", type: "CARDIO", setsPerSession: 1, description: "Long easy run",
     cardioFields: [
-      { key: "distance_km",  label: "Дистанция", unit: "km",  default: 12 },
-      { key: "duration_min", label: "Время",     unit: "min", default: 70 }
+      { key: "distance_km",  label: "Дистанция", unit: "km",  default: 12, sheetField: "load" },
+      { key: "duration_min", label: "Время",     unit: "min", default: 70, sheetField: "reps" }
     ] },
   { id: "tempo",    name: "Tempo run",   type: "CARDIO", setsPerSession: 2, description: "WU + 12.5 min + 3 min jog + 12.5 min + CD. Each tempo interval = 1 set.",
     cardioFields: [
-      { key: "distance_km", label: "Общая дистанция", unit: "km",  default: 9.5 },
-      { key: "quality_min", label: "Темповое время",  unit: "min", default: 12.5 }
+      { key: "distance_km", label: "Общая дистанция", unit: "km",  default: 9.5,  sheetField: "load" },
+      { key: "quality_min", label: "Темповое время",  unit: "min", default: 12.5, sheetField: "reps" }
     ] },
   { id: "intervals", name: "Intervals",  type: "CARDIO", setsPerSession: 6, description: "6×[800m + 1min rest]. HR 175+. Each 800m repeat = 1 set.",
     cardioFields: [
@@ -40,11 +45,11 @@ export const exercises = [
     ] },
   { id: "basketball", name: "Basketball", type: "CARDIO", setsPerSession: 1, description: "Solo shooting + dribbling. Easy cardio.",
     cardioFields: [
-      { key: "duration_min", label: "Время", unit: "min", default: 60 }
+      { key: "duration_min", label: "Время", unit: "min", default: 60, sheetField: "reps" }
     ] },
   { id: "z2_cycle", name: "Z2 cycle",    type: "CARDIO", setsPerSession: 1, description: "135–145 HR. Low impact.",
     cardioFields: [
-      { key: "duration_min", label: "Время", unit: "min", default: 93 }
+      { key: "duration_min", label: "Время", unit: "min", default: 93, sheetField: "reps" }
     ] }
 ];
 

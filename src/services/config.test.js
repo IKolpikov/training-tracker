@@ -37,6 +37,28 @@ describe("buildPlanConfig", () => {
     expect(exerciseById.tempo.setsPerSession).toBe(2);
   });
 
+  it("CARDIO defaults map by sheetField, not by index (distance↔time swap fix)", () => {
+    // Sheet semantics: Reps=время (minutes), Load=дистанция (km).
+    // plan.js cardioFields для tempo: [0]=distance_km (sheetField=load), [1]=quality_min (sheetField=reps).
+    // Раньше код брал reps→field[0], load→field[1] и получал swap (Дистанция=12.5, Время=9.5).
+    const t = exerciseById.tempo;
+    const distance = t.cardioFields.find(f => f.key === "distance_km");
+    const time     = t.cardioFields.find(f => f.key === "quality_min");
+    expect(distance.default).toBe(9.5);   // ← из Load
+    expect(time.default).toBe(12.5);      // ← из Reps
+  });
+
+  it("CARDIO without sheetField keeps hardcoded default (intervals)", () => {
+    // intervals: Sheet reps=800 (meters, дистанция отрезка), load=8 (km, общая).
+    // Семантика в Sheet специфическая — поля в plan.js без sheetField, не override-им.
+    const rows2 = [
+      { id: "intervals", day: "Сб", type: "Cardio", name: "Intervals", sets: 6, reps: 800, unit: "meters", load: 8, load_unit: "km" }
+    ];
+    const { exerciseById: ex2 } = buildPlanConfig(rows2);
+    const dist = ex2.intervals.cardioFields.find(f => f.key === "distance_km");
+    expect(dist.default).toBe(0.8); // hardcoded из plan.js, НЕ 8 из Sheet
+  });
+
   it("places exercises into the right day buckets", () => {
     expect(schedule["Пн"].strength).toContain("rdl_classic");
     expect(schedule["Пн"].strength).toContain("iso");
