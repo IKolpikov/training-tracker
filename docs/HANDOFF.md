@@ -23,18 +23,26 @@ backend через Apps Script `/exec`. Single-user, без auth. Всё уже 
 
 После этого `git log --oneline -20` → видишь последние работы.
 
-## Состояние на момент handoff (2026-06-04)
+## Состояние на момент handoff (2026-06-05)
 
 ### Что в проде (live)
-- **Frontend** на `training-tracker-brown.vercel.app`, последний коммит `d87be5e`
+- **Frontend** на `training-tracker-brown.vercel.app`, последний коммит `2af4ee3`
 - **Backend** Code.gs задеплоен с полным набором actions:
   `logs`/`plan`/`habits`/`polza` + `append`/`update`/`delete`/`addPolza`/`cleanupEmpty`
 - **Log-таб** чистый: 106 реальных строк, 0 пустых
-- **PWA** настроена: иконка бегуна, manifest, apple-touch-icon — можно «Добавить на главный экран»
+- **PWA Android-ready**: новый pictogram-runner, белый сплеш, maskable иконка
+  с safe-zone, Service Worker для мгновенного cold-open. Установка через Chrome
+  «Установить приложение». Detail ниже в [PWA / иконки / SW](#pwa--иконки--sw).
+- **Last-viewed-day restore**: при открытии в течение того же логического дня
+  (граница 04:00) приложение поднимается на день, где пользователь был. После
+  04:00 — сброс на сегодня. Ключ `viewed_date_v1` в localStorage.
 - **Тесты**: 32/32 unit (`npm test`), 9/9 backend smoke (`npm run test:backend`)
 
 ### Последние 10 коммитов
 ```
+2af4ee3 Android PWA: maskable icon + service worker for instant cold-open
+86a1408 New runner pictogram + white PWA splash + restore last-viewed day
+a6cfdcb Handoff: refreshed CLAUDE.md + HANDOFF.md for new-session continuity
 d87be5e Add COACH.md — self-contained instructions for an AI coach
 6875bdc Favicon + app icon + PWA manifest
 01f7185 Regression test: each week is a clean slate, no debt crosses Mon
@@ -42,10 +50,45 @@ d87be5e Add COACH.md — self-contained instructions for an AI coach
 28d5806 Fix the actual data-loss bug: drainQueue race overwriting concurrent pushes
 160f2af Minus = simple tap; guard against empty Log rows
 508960e Fix long-press threshold + ISO modal shows correct sheet defaults
-fe7b467 AddPolza: optimistic close + no autofill bar; day theme; drop circuit label
-6907c34 chore: drop accidental .tmp-diff.patch leftover from simplify-review
-00d666d Phase 41 + 39/40/42/43 + simplify pass
 ```
+
+### PWA / иконки / SW
+
+Файлы:
+- `public/icon.svg` — основная иконка, full-bleed runner (flowing-curves pictogram,
+  чёрные толстые stroked-curves + filled head на белом). Используется для favicon,
+  apple-touch-icon, manifest `purpose: "any"`.
+- `public/icon-maskable.svg` — тот же runner, но масштабирован в safe-zone 80%
+  (`transform="translate(56 56) scale(0.78)"`) для Android adaptive shapes.
+  ВАЖНО: если меняешь основной SVG — поменяй и этот, paths должны совпадать.
+- `public/sw.js` — Service Worker. Стратегии:
+  - `/assets/*` (hashed bundles) → cache-first, immutable
+  - navigation / index.html → network-first, 2s timeout, fallback к cached `/`
+  - icons + manifest → cache-first
+  - cross-origin (`/exec` Apps Script) → bypass, всегда сеть
+  - `CACHE_VERSION = "tt-v1"` — бампать ТОЛЬКО когда меняешь логику SW; для
+    обычных деплоев hashed assets сами инвалидируются.
+- `public/manifest.webmanifest`:
+  - `background_color: "#ffffff"` (сплеш белый, совпадает с белым фоном иконки —
+    выглядит как фуллскрин лого). НЕ менять обратно на тёмный.
+  - `theme_color: "#0f172a"` (адресная строка / chrome bar тёмный — под цвет
+    шапки приложения).
+  - 5 icon entries: 192/512 `any` + 192/512 `maskable` + SVG.
+- `src/main.jsx` — регистрация SW. ОБЯЗАТЕЛЬНО `import.meta.env.PROD` guard,
+  иначе в `npm run dev` SW закэширует unhashed Vite-модули → stale code.
+- `scripts/gen-icons.mjs` — генерит 6 PNG: favicon-32, apple-touch-icon (180),
+  icon-192/512 (any) + icon-maskable-192/512. После правки SVG — `npm run icons`.
+
+Хард-усвоенное по PWA:
+- SW ловит обновление только при следующей загрузке после деплоя. Первый
+  cold-open после push в master = всё ещё старый shell. Это нормально.
+- Если жалуются «не вижу новое» — попроси открыть DevTools → Application →
+  Service Workers → Unregister + hard refresh. Или Chrome Android: настройки
+  сайта → очистить данные.
+- iOS Safari: SW работает только если приложение установлено как PWA (Add to
+  Home Screen). Без установки — SW есть, но iOS его активно вытесняет.
+- Maskable padding 10% — стандарт. Не делай меньше, иначе на круглых
+  лаунчерах режутся конечности.
 
 ### Текущие открытые threads (приоритет)
 

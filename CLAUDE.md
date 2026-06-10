@@ -15,7 +15,7 @@ Mobile-first single-user веб-приложение для трекинга е�
 - **/exec URL**: `https://script.google.com/macros/s/AKfycbwok3O8A4Q-O9VwXwg_mczbcU29leqORsWXrko1D92QAJwtkoXHavQQGJAAELnNCZqf/exec`
 - **Hosting**: Vercel (auto-deploy on push to master). Frontend → `training-tracker-brown.vercel.app`.
 - **Offline**: localStorage (`src/services/cache.js` + `sync.js`) — кэш + три очереди (append/update/delete).
-- **PWA**: `public/manifest.webmanifest` + apple-touch-icon → можно «Добавить на главный экран».
+- **PWA**: `public/manifest.webmanifest` + `public/sw.js` (Service Worker) + apple-touch-icon → можно «Добавить на главный экран» / «Установить приложение». SW кэширует shell для мгновенного cold-open на Android Chrome.
 
 ## Архитектура данных
 
@@ -54,6 +54,12 @@ Frontend boot:
 
 10. **Перенос через границу 04:00** — `date`/`week_iso`/`day` поля считаются от `logicalNow()`, НЕ от `Date.now()`. Если меняешь логику — обязательно сохрани этот инвариант.
 
+11. **viewedDate persists в localStorage** (`viewed_date_v1`). На boot — restore если `logicalNow(savedAt) === logicalNow()` (тот же логический день), иначе `logicalNow()`. Открытие приложения в течение дня = land на дне, где был; после 04:00 = сегодня. См. `restoreViewedDate()` в `App.jsx`.
+
+12. **Service Worker — registration ТОЛЬКО в prod** (`import.meta.env.PROD` guard в `main.jsx`). В dev Vite отдаёт unhashed модули — SW закэширует stale code. Cache strategy в `sw.js`: assets cache-first (hashed = immutable), navigation network-first с 2s timeout fallback на cached `/`. Cross-origin (Apps Script `/exec`) bypassed — live API only.
+
+13. **Maskable иконка ≠ основная иконка**. `icon.svg` идёт edge-to-edge для splash/favicon. `icon-maskable.svg` — тот же runner в safe-zone 80% (`scale(0.78) translate(56 56)`) чтобы Android adaptive shapes (круг/squircle/teardrop) не резали конечности. Если правишь paths в одном — синхронизируй второй.
+
 ## Файлы по теме (don't reinvent)
 
 ```
@@ -85,6 +91,18 @@ src/
 backend/
 ├── Code.gs                       # /exec endpoint — actions: logs/plan/habits/polza + append/update/delete/addPolza/cleanupEmpty
 └── smoke-test.sh                 # `npm run test:backend` — 9 проверок против живого бэка
+
+public/
+├── icon.svg                      # Основная иконка (full-bleed runner)
+├── icon-maskable.svg             # Same paths, safe-zone 80% — для Android adaptive shapes
+├── icon-{192,512}.png            # Авто-генерится из icon.svg → manifest purpose:any
+├── icon-maskable-{192,512}.png   # Авто из icon-maskable.svg → manifest purpose:maskable
+├── apple-touch-icon.png          # 180×180, iOS home-screen
+├── favicon-32.png                # Браузерная вкладка
+├── manifest.webmanifest          # bg #fff (под белый сплеш), theme #0f172a (под шапку)
+└── sw.js                         # Service Worker (cache-first assets, network-first HTML)
+
+scripts/gen-icons.mjs             # `npm run icons` — рендерит все PNG из обоих SVG
 ```
 
 ## Workflow & conventions
